@@ -50,7 +50,7 @@ amministratore:
 
 ```
 schtasks /create /tn "Sentinella stagione" ^
-  /tr "C:\dev\serie-a-index-engine\sentinella.bat" /sc daily /st 09:00
+  /tr "C:\dev\football-index-engine\sentinella.bat" /sc daily /st 09:00
 ```
 
 ### Preparare il bot, una volta sola

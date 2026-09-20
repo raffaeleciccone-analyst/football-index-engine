@@ -1,8 +1,10 @@
-# Serie A Index — engine
+# Football Index — engine
 
-The code behind **[serie-a-index](https://raffaeleciccone-analyst.github.io/serie-a-index/)**: a
-descriptive ranking model for Serie A players, and — more to the point — the machinery that
-checks whether the ranking is worth anything.
+The code behind **[serie-a-index](https://raffaeleciccone-analyst.github.io/serie-a-index/)** and
+**[premier-league-index](https://raffaeleciccone-analyst.github.io/premier-league-index/)**: a
+descriptive ranking model for footballers, and — more to the point — the machinery that
+checks whether the ranking is worth anything. One engine, one correction at a time: the league is
+a setting, not a copy of the code.
 
 This repository is a **curated subset**. See [What is not here](#what-is-not-here).
 
