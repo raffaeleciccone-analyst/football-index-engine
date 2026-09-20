@@ -301,9 +301,18 @@ def _solo_stagione_corrente(alias: str = "gp") -> str:
             return ""
     except Exception:
         return ""
-    import os
-    stagione = os.environ.get("SERIE_A_SEASON", "2025-26")
-    return " AND %s.season = '%s'" % (alias, stagione)
+    # La stagione la chiede a `config`, non se la dichiara. Era
+    # `os.environ.get("SERIE_A_SEASON", "2025-26")`: la stessa costante scritta
+    # in due punti, cioe' due valori che possono divergere. Il giorno che
+    # divergono l'audit filtra su un anno e il motore ne pubblica un altro, e i
+    # risultati sembrano un guasto dei dati invece che del filtro.
+    import sys
+    from pathlib import Path
+    radice = str(Path(__file__).resolve().parents[2])
+    if radice not in sys.path:
+        sys.path.insert(0, radice)
+    import config
+    return " AND %s.season = '%s'" % (alias, config.SEASON_CORRENTE)
 
 
 def _tabella_esiste(nome: str) -> bool:
@@ -459,18 +468,69 @@ def check_temporal_anomalies(report: Report) -> None:
             fix_strategy="Swap delle due date o cancellazione manuale.",
         ))
 
-    # 3) infortuni out-of-season (data_inizio < 1 ago 2025 o > oggi+30)
-    n_oos = fetch_one("""
+    # 3) infortuni la cui data non sta nella stagione che dichiarano
+    #
+    # Due riscritture, la seconda perche' la prima rispondeva a una domanda
+    # che non e' piu' quella giusta.
+    #
+    # All'inizio il limite era '2025-07-01', scritto a mano: una data fissa
+    # invecchia da sola, e a stagione nuova le righe dell'annata prima restano
+    # dentro la finestra e passano — il guasto diventa invisibile proprio al
+    # controllo nato per vederlo. Poi l'estate e' arrivata da `config`, e il
+    # controllo ha cominciato a segnalare **127 righe del 2025-26**: vere,
+    # regolari, e a posto dove sono. Da quando `t_infortuni` tiene piu' di una
+    # stagione, le righe vecchie non sono un'anomalia, sono l'archivio. Un
+    # controllo che accusa l'archivio si impara a ignorare, ed e' il modo in
+    # cui un controllo smette di servire.
+    #
+    # La domanda vera non e' "questa riga e' di quest'anno" ma "questa riga
+    # cade dentro la stagione che si e' scritta addosso". Cosi' si vede la cosa
+    # che fa davvero male: una riga etichettata con l'annata sbagliata, che e'
+    # esattamente cio' che produceva la costante STAGIONE quando restava
+    # indietro. L'estate la ricava dalla riga, non dal calendario di oggi.
+    n_incoerenti = fetch_one("""
         SELECT COUNT(*) FROM t_infortuni
-        WHERE data_inizio < '2025-07-01' OR data_inizio > DATE_ADD(CURDATE(), INTERVAL 30 DAY)
+        WHERE stagione IS NOT NULL AND data_inizio IS NOT NULL
+          AND (data_inizio <  DATE(CONCAT(LEFT(stagione, 4), '-07-01'))
+            OR data_inizio >= DATE(CONCAT(CAST(LEFT(stagione, 4) AS UNSIGNED) + 1, '-07-01')))
     """)[0]
-    if n_oos:
+    if n_incoerenti:
         report.add(Finding(
-            code="TMP-003", area=Area.TEMPORAL, severity=Severity.LOW,
-            title=f"{n_oos} infortuni fuori range stagionale",
-            table="t_infortuni", rows_affected=n_oos,
-            description="data_inizio fuori da [2025-07-01, oggi+30gg].",
-            root_cause="Dati storici di stagioni precedenti.",
+            code="TMP-003", area=Area.TEMPORAL, severity=Severity.HIGH,
+            title=f"{n_incoerenti} infortuni datati fuori dalla stagione che dichiarano",
+            table="t_infortuni", rows_affected=n_incoerenti,
+            description="data_inizio non cade fra il 1 luglio della stagione "
+                        "dichiarata e il 30 giugno successivo.",
+            root_cause="Stagione scritta a mano in chi inserisce, rimasta "
+                       "indietro rispetto alla stagione dei dati.",
+            fix_available=True,
+            fix_strategy="Rietichettare la riga con la stagione della sua data.",
+        ))
+
+    # 4) infortuni ancora aperti in una stagione conclusa
+    #
+    # `data_rientro NULL` vuol dire "non e' ancora rientrato". In una stagione
+    # finita non significa piu' niente: sono i 62 rimasti aperti del 2025-26,
+    # cioe' gente segnata infortunata da maggio. Non sporcano l'indice — il PRI
+    # filtra per stagione — ma sono lo strascico di uno scarico interrotto, e
+    # una riga aperta per sempre e' un dato che non torna mai vero.
+    import config
+    n_aperti_vecchi = fetch_one("""
+        SELECT COUNT(*) FROM t_infortuni
+        WHERE data_rientro IS NULL AND stagione IS NOT NULL AND stagione <> %s
+    """, (config.SEASON_CORRENTE,))[0]
+    if n_aperti_vecchi:
+        report.add(Finding(
+            code="TMP-004", area=Area.TEMPORAL, severity=Severity.LOW,
+            title=f"{n_aperti_vecchi} infortuni aperti in una stagione conclusa",
+            table="t_infortuni", rows_affected=n_aperti_vecchi,
+            description="data_rientro NULL su righe che non sono della "
+                        f"stagione corrente ({config.SEASON_CORRENTE}).",
+            root_cause="Lo scarico si e' fermato prima della fine della "
+                       "stagione: nessuno ha chiuso le righe rimaste.",
+            fix_available=True,
+            fix_strategy="Chiuderle con l'ultima giornata della loro stagione, "
+                         "non con oggi: oggi direbbe dieci mesi di stop.",
         ))
 
 

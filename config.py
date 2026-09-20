@@ -15,6 +15,7 @@ Uso:
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 from urllib.parse import quote_plus
 
@@ -62,7 +63,34 @@ DB_PASSWORD: str = os.environ.get("DB_PASSWORD", "")
 # parte1 senza filtro le aggregava tutte e produceva una classifica che
 # sembrava plausibile ma non era di nessuna stagione. Il valore sta qui perche'
 # a cambio stagione si tocca un punto solo.
-SEASON_CORRENTE: str = os.environ.get("SERIE_A_SEASON", "2025-26")
+def leggi_env(nome: str, default: str = "") -> str:
+    """Una variabile d'ambiente col nome nuovo, accettando ancora il vecchio.
+
+    Le cinque variabili del motore si chiamavano `SERIE_A_*`, un nome nato
+    quando la Serie A era l'unico campionato. Da quando il motore ne serve due
+    quel prefisso e' una bugia, e la piu' pericolosa e' `SERIE_A_LEGA`: e'
+    quella che decide se stai generando la Premier o la Serie A.
+
+    Un rename secco sarebbe stato il difetto peggiore del nome. Leggendo solo
+    `INDEX_SEASON`, un `SERIE_A_SEASON=2026-27` gia' esportato in una shell o
+    scritto in un `.env` verrebbe **ignorato in silenzio** e il default
+    tornerebbe buono: il sito uscirebbe sulla stagione sbagliata senza che
+    niente si lamenti, che e' la classe di guasto contro cui e' scritto tutto il
+    resto di questo file. Quindi il nome nuovo vince, il vecchio funziona
+    ancora, e quando e' il vecchio a decidere lo dice.
+    """
+    nuovo = os.environ.get("INDEX_" + nome)
+    if nuovo:
+        return nuovo
+    vecchio = os.environ.get("SERIE_A_" + nome)
+    if vecchio:
+        print("config: SERIE_A_%s e' il nome vecchio, usa INDEX_%s "
+              "(per ora funziona lo stesso)" % (nome, nome), file=sys.stderr)
+        return vecchio
+    return default
+
+
+SEASON_CORRENTE: str = leggi_env("SEASON", "2025-26")
 
 
 # Il campionato. Sta qui per lo stesso motivo della stagione: era scritto dentro
@@ -72,7 +100,7 @@ SEASON_CORRENTE: str = os.environ.get("SERIE_A_SEASON", "2025-26")
 # "ITA-Serie A") con la stessa API e lo stesso formato, quindi il motore puo'
 # servirne piu' d'uno cambiando due variabili d'ambiente invece che
 # duplicando il codice — e una correzione resta una sola correzione.
-LEGA_UNDERSTAT: str = os.environ.get("SERIE_A_LEGA", "ITA-Serie A")
+LEGA_UNDERSTAT: str = leggi_env("LEGA", "ITA-Serie A")
 
 
 # Il database lo decide il campionato, come la cartella di uscita e il repo.
@@ -173,13 +201,22 @@ REPO_PUBBLICAZIONE: dict[str, str] = {
 }
 
 
-# Le pagine in piu' che esistono solo per certe leghe. Il caso di mercato e la
-# pagina Pro sono stati scritti sulla Serie A e non hanno un gemello altrove:
-# lasciarli nel menu di un altro campionato significa pubblicare due link rotti
-# in cima a ogni pagina.
+# Le pagine in piu' che esistono solo per certe leghe: nel menu di un campionato
+# che non ce l'ha sarebbero link rotti in cima a ogni schermata.
+#
+# Il caso di mercato resta di una lega sola, e non per pigrizia: i numeri li
+# prende dal payload, ma il testo e' un ragionamento scritto su quel mercato
+# in particolare — `caso_mercato.py` si rifiuta di generarlo altrove.
+#
+# La pagina Pro invece e' passata di qua il 20/9/2026. Era l'ultima scritta a
+# mano dentro il repo del sito, quindi esisteva per la Serie A e basta; ora la
+# genera `pagina_pro.py` da un modello, con i nomi che mette `config`. Quindi
+# la Premier ce l'ha, e la riga qui sotto e' cio' che la fa comparire nel menu
+# delle altre pagine — alla loro prossima generazione, non prima.
 PAGINE_EXTRA: dict[str, list[tuple[str, str, str]]] = {
     "ITA-Serie A": [("caso-mercato.html", "Caso di mercato", "Market case"),
                     ("dashboard_pro.html", "TPI Pro", "TPI Pro")],
+    "ENG-Premier League": [("dashboard_pro.html", "TPI Pro", "TPI Pro")],
 }
 
 _ident = IDENTITA_LEGA.get(LEGA_UNDERSTAT, IDENTITA_LEGA["ITA-Serie A"])
@@ -214,20 +251,43 @@ def cartella_uscita(base=None):
 def cartella_pubblicazione(base=None):
     """Il repo del sito di QUESTA lega, dove finisce la copia da committare.
 
-    Si puo' forzare con SERIE_A_DEMO_DIR, che e' come si chiamava quando la
+    Si puo' forzare con INDEX_DEMO_DIR, che e' come si chiamava quando la
     cartella era una sola. Per una lega senza un repo dichiarato si ricava dal
     nome ("la-liga-index"): meglio una cartella nuova che scrivere in quella
     di un altro campionato.
     """
     import os as _os
     from pathlib import Path
-    forzata = _os.environ.get("SERIE_A_DEMO_DIR")
+    forzata = leggi_env("DEMO_DIR")
     if forzata:
         return Path(forzata)
     base = Path(base) if base else Path(__file__).resolve().parent.parent
     nome = REPO_PUBBLICAZIONE.get(LEGA_UNDERSTAT,
                                   LEGA_SLUG.replace("_", "-") + "-index")
     return base / nome
+
+
+def file_esterno(prefisso: str, season: str | None = None,
+                 slug: str | None = None) -> str:
+    """Il nome di un file in `dati_esterni/`: porta la lega e la stagione.
+
+    I due file che stavano qui — `contratti_2025-26.json` e
+    `xg_concessi_SA_2025-26.json` — avevano la stagione battuta a mano nel nome,
+    e il nome era scritto due volte: una in chi lo produce, una in chi lo legge.
+    Due copie di una costante divergono; queste sono divergute nel modo peggiore,
+    cioe' restando d'accordo fra loro e sbagliate rispetto alla stagione.
+
+    Il difetto non e' che il file manchi: e' che ci sia. A settembre 2026 il
+    motore pubblicava la stagione 2026-27 e caricava i contratti del 2025-26 su
+    85 giocatori su 100, perche' quel file era ancora li' e il nome che cercava
+    era lo stesso. Un file assente lo prende il ripiego, che e' dichiarato e
+    rumoroso; un file vecchio no: passa per buono.
+
+    Col nome composto qui, a stagione nuova il file **manca** — ed e' la cosa
+    giusta da far succedere.
+    """
+    s = SEASON_CORRENTE if season is None else season
+    return "%s_%s_%s.json" % (prefisso, slug or LEGA_SLUG, s)
 
 
 def anno_understat(season: str | None = None) -> int:
@@ -277,7 +337,7 @@ def pretendi_stagione_coerente(stagione_payload, dove: str = "il payload") -> No
     """Ferma il giro se i dati e l'etichetta parlano di due stagioni diverse.
 
     La classifica di una pagina viene dal payload; la stagione scritta nella
-    barra in cima, nel piede e nella filigrana viene da SERIE_A_SEASON. Sono
+    barra in cima, nel piede e nella filigrana viene da INDEX_SEASON. Sono
     due strade per lo stesso numero, quindi possono divergere — e divergono
     esattamente quando fa piu' danno: rigenerando il sito dopo il cambio di
     annata con la variabile ancora ferma su quella vecchia. Ne esce una
@@ -293,14 +353,14 @@ def pretendi_stagione_coerente(stagione_payload, dove: str = "il payload") -> No
         f"SERIE_A_SEASON e' {SEASON_CORRENTE}.\n"
         f"La pagina uscirebbe con la classifica di una stagione e l'etichetta "
         f"dell'altra.\n"
-        f"Imposta SERIE_A_SEASON={stagione_payload} e rilancia, oppure rigenera "
+        f"Imposta INDEX_SEASON={stagione_payload} e rilancia, oppure rigenera "
         f"i dati sulla stagione che vuoi pubblicare."
     )
 
 
 def db_url(driver: str = "mysql+pymysql") -> str:
     """SQLAlchemy URL con password URL-encoded (gestisce '@', ':' nella pwd)."""
-    override = os.environ.get("SERIE_A_DB_URL")
+    override = leggi_env("DB_URL")
     if override:
         return override
     pwd = DB_PASSWORD or _require("DB_PASSWORD")

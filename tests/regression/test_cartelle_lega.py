@@ -23,7 +23,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
 MODULI_CHE_PUBBLICANO = ["pagina_home", "pagina_guida", "pagina_squadra",
-                         "parte2_dashboard", "parte3_valida_tpi"]
+                         "pagina_pro", "parte2_dashboard", "parte3_valida_tpi"]
 
 
 def _con_lega(lega: str, monkeypatch):
