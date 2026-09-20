@@ -154,8 +154,8 @@ variabili decidono tutto il resto — database, cartella di uscita, repo, lingua
 nome del sito:
 
 ```bash
-export SERIE_A_LEGA="ENG-Premier League"   # oppure "ITA-Serie A"
-export SERIE_A_SEASON=2026-27
+export INDEX_LEGA="ENG-Premier League"   # oppure "ITA-Serie A"
+export INDEX_SEASON=2026-27
 ```
 
 | # | Comando | Cosa fa |
@@ -212,7 +212,7 @@ leggono il payload pubblicato. Non c'e' niente da spostare a mano.
 
 | Messaggio | Significa | Cosa fare |
 |---|---|---|
-| `Stagione incoerente: payload.json e' 2026-27, SERIE_A_SEASON e' 2025-26` | i dati e l'etichetta della barra parlano di due stagioni | esportare la variabile giusta e rilanciare |
+| `Stagione incoerente: payload.json e' 2026-27, INDEX_SEASON e' 2025-26` | i dati e l'etichetta della barra parlano di due stagioni | esportare la variabile giusta e rilanciare |
 | `calendario: le partite scaricate risultano in {...}` | l'ingestione ha etichettato male le partite | non proseguire: e' il difetto del DEFAULT di colonna, va guardato il database |
 | `Understat non ha restituito nessuna partita` | download muto o stagione non cominciata | riprovare piu' tardi, **non** forzare |
 | `Solo N pagine squadra scritte: le altre restano dove sono` | il payload ha meno di dieci squadre | il giro non e' completo, guardare a monte |
@@ -230,6 +230,37 @@ git status --short                            # le retrocesse compaiono come can
 
 E a occhio, sulla homepage: la prima cifra deve dire "qualificati dopo N
 giornate", non "giocatori qualificati".
+
+## 4-bis · Il giro di ogni giornata
+
+Dall'8/9/2026 la sentinella non lavora solo al cambio di stagione: **fa il giro a
+ogni giornata**. Lo stato si segna per giornata (`lega|stagione|pubblicazione|gN`)
+e non piu' per stagione — con la chiave vecchia il sito si aggiornava una volta
+in agosto e restava fermo nove mesi, mentre il bot si alzava ogni mattina per
+non fare niente.
+
+**Dalla seconda giornata in poi va online da solo**: committa e pusha, ma solo
+se la verifica finale di `pubblica.py` e' passata. **Il primo giro di una
+stagione no**, e la ragione e' precisa: li' il link al CSV nel README cambia,
+perche' il nome del file porta l'annata dentro, e quello lo sistema una persona.
+Dopo non cambia piu' niente a mano.
+
+Se il push si ferma — rete, credenziali, un rifiuto del remoto — le pagine
+restano scritte e verificate sul disco, e il messaggio Telegram dice cosa e'
+successo e come riprenderlo. Niente si perde.
+
+**La soglia vale solo per il primo giro di una stagione**, e dall'8/9/2026 e'
+**6** invece di 3. Misurato sui vintage della 2025-26: alla giornata 3 solo due
+delle sette dimensioni dell'indice hanno valori (confidence 0.000), alla 4 sono
+cinque, **alla 6 ci sono tutte**. Pubblicare alla 3 vuol dire debuttare con un
+modello ridotto a due settimi — l'unico momento dell'anno in cui l'indice non e'
+se stesso.
+
+Dopo il debutto la soglia non conta piu': una stagione gia' pubblicata si
+aggiorna a ogni giornata che chiude, altrimenti si terrebbe il sito fermo per un
+motivo che riguardava solo la prima volta.
+
+L'attivita' pianificata lancia `sentinella.py --tutte --giornate 6 --pubblica`.
 
 ## 5 · Aperto
 
@@ -272,6 +303,17 @@ giornate", non "giocatori qualificati".
   (`data-st-it="{curBreve}"`) riempito a runtime dal payload, dal commit
   `fa547f0`. Segue la stagione da sola, ed e' per questo che la verifica di
   `pubblica.py` la esenta dal confronto sull'etichetta.
+* **I nomi delle variabili: fatto l'8/9/2026.** Erano `SERIE_A_*`, un prefisso
+  nato quando la Serie A era l'unico campionato; con due campionati era una
+  bugia, e `SERIE_A_LEGA` — quella che sceglie quale sito generi — la piu'
+  pericolosa. Ora si chiamano `INDEX_*` e si leggono con `config.leggi_env()`,
+  che **accetta ancora il nome vecchio e lo dice**: leggere solo il nuovo
+  avrebbe fatto ignorare in silenzio una variabile gia' esportata, pubblicando
+  la stagione sbagliata senza un lamento. `INDEX_SEASON` sta in `.env`, e
+  `audit/lib/checks.py` non si dichiara piu' la stagione per conto suo: la
+  chiede a `config`, perche' la stessa costante in due punti e' due valori che
+  possono divergere.
+
 * Il **DEFAULT `'2025-26'`** della colonna `season` e' ancora nel DDL dei due
   database. La verifica a valle dell'ingestione lo copre; toglierlo tocca
   `set_up_tpi_pro/aggiorna.py`, che e' un flusso a parte.

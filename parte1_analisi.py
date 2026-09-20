@@ -655,8 +655,8 @@ def _rosa_hexi_della_lega():
     return Path("C:/dev/heXI/data/normalized") / ("%s_%d-%d.json" % (sigla, anno, anno + 1))
 
 
-HEXI_ROSTER = (Path(os.environ["SERIE_A_HEXI_ROSTER"])
-               if os.environ.get("SERIE_A_HEXI_ROSTER") else _rosa_hexi_della_lega())
+HEXI_ROSTER = (Path(config.leggi_env("HEXI_ROSTER"))
+               if config.leggi_env("HEXI_ROSTER") else _rosa_hexi_della_lega())
 HEXI_STAGIONE = "%d/%d" % (config.anno_understat(), config.anno_understat() + 1)
 
 
@@ -710,7 +710,8 @@ def carica_valore_mercato(engine) -> dict[int, float]:
     return fuori
 
 
-CONTRATTI = Path(__file__).parent / "dati_esterni" / "contratti_2025-26.json"
+CONTRATTI = (Path(__file__).parent / "dati_esterni"
+             / config.file_esterno("contratti"))
 
 
 def carica_contratti(engine) -> dict[int, dict]:
@@ -849,6 +850,48 @@ def apply_role_pipeline(
 # ════════════════════════════════════════════════════════════════
 # 2. UTILITÀ GENERALI
 # ════════════════════════════════════════════════════════════════
+def scarta_senza_ruolo(df_pa, df_gp_raw):
+    """Chi si qualifica ma non ha un ruolo non si pubblica: si conta.
+
+    Il TPI e' un composito di punteggi standardizzati **dentro il ruolo**: senza
+    ruolo non c'e' niente rispetto a cui standardizzare, e la riga esce con le
+    colonne vuote. Nel CSV, che si presenta come "ogni giocatore qualificato",
+    una riga cosi' e' una bugia in due direzioni: dice che e' qualificato e non
+    dice niente di lui.
+
+    Il ripiego sui ruoli (`risolvi_ruoli`, punto 2-bis) dava per scontato che
+    non capitasse: "chi ha cosi' pochi minuti non si qualifica". Era vero a
+    trentotto giornate, dove la soglia e' oltre seicento minuti. E' falso a tre,
+    dove la soglia e' cinquantaquattro: l'8/9/2026 sulla Premier due giocatori
+    di cui ne' Understat ne' heXI conoscono la posizione — 65' e 71' — sono
+    finiti nel CSV con ruolo e TPI vuoti. E' il difetto tipico dell'inizio
+    stagione: una soglia che si adatta ai dati incontra un'anagrafica che non si
+    e' ancora riempita.
+
+    Toglierli in silenzio sarebbe l'altro errore: il numero si dice, perche' non
+    li ha esclusi un criterio — mancava il dato.
+    """
+    if "ruolo" not in getattr(df_pa, "columns", []):
+        return df_pa, df_gp_raw
+    vuoto = (df_pa["ruolo"].isna()
+             | df_pa["ruolo"].astype(str).str.strip().isin(["", "nan", "None"]))
+    if not vuoto.any():
+        return df_pa, df_gp_raw
+    nomi = ", ".join(str(n) for n in df_pa.loc[vuoto, "giocatore"].head(5))         if "giocatore" in df_pa.columns else ""
+    log.warning(
+        "Qualificati senza ruolo, esclusi dalla pubblicazione: %d"
+        "%s. Ne' Understat ne' heXI danno la posizione: senza ruolo il TPI non "
+        "si calcola, e una riga vuota in un file che dice 'ogni giocatore "
+        "qualificato' e' peggio di una riga in meno.",
+        int(vuoto.sum()), (" (es. %s)" % nomi) if nomi else "")
+    ids = {int(x) for x in df_pa.loc[vuoto, "giocatore_id"]}
+    df_pa = df_pa[~vuoto].copy().reset_index(drop=True)
+    df_gp_raw = df_gp_raw[
+        ~df_gp_raw["giocatore_id"].astype("Int64").isin(ids)
+    ].copy()
+    return df_pa, df_gp_raw
+
+
 def applica_esclusioni(df_pa, df_gp_raw, escludi: dict[str, str]):
     """Toglie dall'indice i giocatori dichiarati in `escludi`, uno per uno.
 
@@ -1080,18 +1123,37 @@ class DatabaseLayer:
     def load_players_analytics(self) -> pd.DataFrame:
         # Base costruita direttamente da `giocatori` + aggregati freschi di
         # `giocatore_partita`. Per multi-stagione: aggregato filtrato per
-        # calendario.season; il JOIN con `squadre` usa la squadra ATTUALE
-        # del giocatore (anagrafica), che può differire da quella della stagione
-        # storica — ma è solo per displaying. La logica di squadra-per-partita
-        # è gestita via load_player_games e squadra_calendario filtrati.
+        # La squadra del giocatore viene dalle SUE PARTITE — l'ultima giocata
+        # nella stagione che si sta pubblicando — non da `g.squadra_id`.
+        #
+        # Prima veniva dall'anagrafica, con la nota "è solo per displaying".
+        # Reggeva finché anagrafica e realtà coincidevano, e ha smesso l'8/9/2026
+        # con la fusione dei cinquanta record spezzati: unendo due meta' di una
+        # carriera sopravvive il record piu' vecchio, che porta il club vecchio.
+        # Robertson, che gioca nel Tottenham, e' uscito "Liverpool"; Fatawu
+        # "Leicester" invece di "Ipswich". Nella stessa pagina la classifica
+        # diceva una squadra e le partite un'altra.
+        #
+        # Non e' nemmeno solo displaying: `squadra_id` finisce nei raggruppamenti
+        # a valle, quindi sbagliato sposta anche dei numeri. Le partite non
+        # cambiano quando due record si uniscono — sono il posto giusto da cui
+        # chiederlo. L'anagrafica resta come ripiego per chi partite non ne ha.
         sw = self._season_where("cal")
+        sw2 = self._season_where("cal2")
+        squadra_dalle_partite = f"""(
+                    SELECT CASE gp2.ruolo WHEN 'casa' THEN cal2.squadra_casa_id
+                                          ELSE cal2.squadra_trasferta_id END
+                    FROM giocatore_partita gp2
+                    JOIN calendario cal2 ON cal2.id = gp2.calendario_id
+                    WHERE gp2.giocatore_id = g.id AND gp2.minuti > 0{sw2}
+                    ORDER BY cal2.data DESC, cal2.id DESC LIMIT 1)"""
         df = pd.read_sql(
             f"""
             SELECT
                 g.id                       AS giocatore_id,
                 g.ruolo,
-                g.squadra_id,
-                sq.nome                    AS squadra,
+                COALESCE({squadra_dalle_partite}, g.squadra_id) AS squadra_id,
+                COALESCE(sq_vera.nome, sq.nome) AS squadra,
                 COALESCE(agg.minuti, 0)    AS minuti,
                 COALESCE(agg.partite, 0)   AS partite,
                 COALESCE(agg.goal, 0)      AS goal,
@@ -1109,6 +1171,7 @@ class DatabaseLayer:
                 END) AS giocatore
             FROM giocatori g
             LEFT JOIN squadre sq ON sq.id = g.squadra_id
+            LEFT JOIN squadre sq_vera ON sq_vera.id = {squadra_dalle_partite}
             JOIN (
                 SELECT gp.giocatore_id,
                        SUM(gp.minuti)               AS minuti,
@@ -1561,7 +1624,8 @@ def compute_dimensions(
 # ══════════════════════════════════════════════════════════════════
 # Difese solide: fonte esterna
 # ══════════════════════════════════════════════════════════════════
-DIFESE_ESTERNE = Path(__file__).parent / "dati_esterni" / "xg_concessi_SA_2025-26.json"
+DIFESE_ESTERNE = (Path(__file__).parent / "dati_esterni"
+                  / config.file_esterno("xg_concessi"))
 
 
 def carica_difese_esterne(sq_name_map: dict[int, str]) -> pd.Series | None:
@@ -2139,7 +2203,8 @@ def compute_physical_reliability(
     )
 
 
-def load_age_physical_data(engine, df_pa: pd.DataFrame, df_gp: pd.DataFrame, cfg: Config) -> pd.DataFrame:
+def load_age_physical_data(engine, df_pa: pd.DataFrame, df_gp: pd.DataFrame, cfg: Config,
+                           season: str | None = None) -> pd.DataFrame:
     """
     Carica/calcola AII e PRI per tutti i giocatori qualificati.
 
@@ -2171,13 +2236,24 @@ def load_age_physical_data(engine, df_pa: pd.DataFrame, df_gp: pd.DataFrame, cfg
         birth_map = {}
 
     # ── Carica infortuni ──────────────────────────────────────
+    # La stagione filtra, e non e' un dettaglio. `t_infortuni` ha la colonna
+    # `stagione` da sempre, ma questa query la ignorava: finche' il database
+    # conteneva un'annata sola non si vedeva, e al secondo anno il PRI di un
+    # giocatore avrebbe sommato gli infortuni di quello prima a quelli di adesso
+    # — una penalita' che cresce da sola, ogni agosto, senza che nessuno la
+    # scriva. Senza `season` il comportamento resta quello di prima, perche'
+    # chi chiama questa funzione da un DB monostagione non ha una stagione da
+    # dare e non deve trovarsi una tabella vuota.
     inj_map: dict[int, dict] = {}
     try:
-        df_inj = pd.read_sql(
-            "SELECT giocatore_id, COUNT(*) AS n_inj, SUM(COALESCE(giorni_out,0)) AS gg_out "
-            "FROM t_infortuni GROUP BY giocatore_id",
-            engine,
-        )
+        sql_inj = ("SELECT giocatore_id, COUNT(*) AS n_inj, "
+                   "SUM(COALESCE(giorni_out,0)) AS gg_out FROM t_infortuni")
+        params: tuple = ()
+        if season:
+            sql_inj += " WHERE stagione = %(season)s"
+            params = {"season": season}
+        sql_inj += " GROUP BY giocatore_id"
+        df_inj = pd.read_sql(sql_inj, engine, params=params or None)
         for _, r in df_inj.iterrows():
             inj_map[int(r["giocatore_id"])] = {
                 "n": int(r["n_inj"]),
@@ -2688,7 +2764,8 @@ def main(max_giornata: int | None = None,
 
     # 5) Le esclusioni dichiarate, che sono un'altra cosa dai portieri.
     df_pa, df_gp_raw = applica_esclusioni(
-        df_pa, df_gp_raw, getattr(cfg, "escludi", None) or {})
+        df_pa, df_gp_raw, getattr(CFG, "escludi", None) or {})
+
 
     # ── SOS per partita ────────────────────────────────────────
     df_gp_raw["sos_avv"] = df_gp_raw["avversario_id"].map(sos_map).astype(float)
@@ -2756,6 +2833,13 @@ def main(max_giornata: int | None = None,
     df_pa = filter_qualified_players(
         df_pa, df_gp_raw, min_full, min_winter, winter_ids
     )
+    # Chi si qualifica ma non ha un ruolo esce QUI, non prima: la soglia dei
+    # minuti e' adattiva (il massimo fra la base e il trentesimo percentile), e
+    # toglierli prima cambierebbe il percentile — cioe' cambierebbe chi si
+    # qualifica. Misurato: filtrando prima, i qualificati della Premier
+    # passavano da 256 a 239. La popolazione su cui si misura la soglia deve
+    # restare quella vera; il taglio si fa dopo, su chi la soglia l'ha passata.
+    df_pa, df_gp_raw = scarta_senza_ruolo(df_pa, df_gp_raw)
     gids = set(int(x) for x in df_pa["giocatore_id"])
     df_gp = df_gp_raw[df_gp_raw["giocatore_id"].isin(gids)].copy()
     log.info(
@@ -2806,7 +2890,7 @@ def main(max_giornata: int | None = None,
 
     # ── Nuovi indici v2: AII + PRI ────────────────────────────
     log.info("Calcolo Età Index (AII) e Affidabilità Fisica (PRI)...")
-    df_physical = load_age_physical_data(engine, df_pa, df_gp, CFG)
+    df_physical = load_age_physical_data(engine, df_pa, df_gp, CFG, season)
     df_pa = df_pa.merge(df_physical, on="giocatore_id", how="left")
 
     # ── Dimensioni per contesto → colonne df_pa ───────────────

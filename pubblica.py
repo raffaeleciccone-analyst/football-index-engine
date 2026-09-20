@@ -140,12 +140,30 @@ def passi(stagione: str, lega: str = "") -> list[tuple[str, list[str] | None, st
         ("validazione", ["parte3_valida_tpi.py", "--solo-pagina"],
          "riscrive la pagina SENZA rimisurare"),
     ]
+    # La pagina Pro entra per le leghe che ce l'hanno nel menu, cioe' lo decide
+    # `config` e non una riga scritta qui. Fino al 20/9/2026 non era nella
+    # sequenza per la stessa ragione del caso di mercato: viveva nel repo del
+    # sito e nessuno la generava. I numeri li chiede al payload a ogni
+    # apertura, quindi basta che esca dopo parte1.
+    import config as _cfg
+    if any(h == "dashboard_pro.html" for h, *_ in _cfg.PAGINE_EXTRA.get(lega, [])):
+        elenco.append(
+            ("pro", ["pagina_pro.py"],
+             "la classifica Pro, con i cinque modulatori scout"))
     if lega == "ITA-Serie A":
         # Dopo l'archivio: il caso si costruisce sull'ultima stagione che ha
         # abbastanza minuti, e a settembre quella e' l'annata appena archiviata.
         elenco.append(
             ("caso-mercato", ["caso_mercato.py"],
              "il caso di mercato, sull'ultima stagione con abbastanza minuti"))
+        # Ultimo, perche' riduce il payload gia' scritto. Stava fuori dalla
+        # sequenza per lo stesso motivo del caso di mercato — il generatore
+        # viveva nel repo del sito — e l'8/9/2026 ha fermato il commit del
+        # cambio stagione: il gancio del pre-commit ha visto che il dataset
+        # dell'assistente era rimasto all'annata prima.
+        elenco.append(
+            ("assistente", ["build_ai_dataset.py"],
+             "il dataset compatto che l'assistente legge"))
     return elenco
 
 
@@ -316,14 +334,14 @@ def main() -> int:
     a = ap.parse_args()
 
     lega = risolvi_lega(a.lega)
-    ambiente = dict(os.environ, SERIE_A_LEGA=lega)
+    ambiente = dict(os.environ, INDEX_LEGA=lega)
     if a.stagione:
-        ambiente["SERIE_A_SEASON"] = a.stagione
+        ambiente["INDEX_SEASON"] = a.stagione
 
     cfg = _leggi_config(ambiente)
     stagione = cfg["stagione"]
     uscita, repo = Path(cfg["uscita"]), Path(cfg["repo"])
-    ambiente["SERIE_A_SEASON"] = stagione
+    ambiente["INDEX_SEASON"] = stagione
 
     print("=" * 74)
     print("%s — %s — stagione %s" % (cfg["sito"], lega, stagione))
