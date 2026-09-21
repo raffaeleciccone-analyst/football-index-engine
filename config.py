@@ -267,6 +267,53 @@ def cartella_pubblicazione(base=None):
     return base / nome
 
 
+# heXI e' una fonte esterna in **SOLA LETTURA**: da li' si prende la rosa
+# normalizzata e il feed Sportmonks, e non ci si scrive mai niente.
+#
+# I percorsi erano scritti a mano dentro i tre script che li usano, ognuno col
+# proprio campionato e la propria stagione: `SA_2025-2026.json` in due file e
+# `lineups_SA_2025_2026.json` nel terzo. Il difetto che ne veniva e' quello
+# visto tutto il giorno: **l'uscita seguiva la lega e l'ingresso no**. Con la
+# Premier selezionata, `estrai_contratti_transfermarkt.py` avrebbe scritto
+# `contratti_premier_league_2026-27.json` leggendo le venti squadre italiane.
+# E sulla Serie A stessa la rosa era quella dell'anno prima, quindi Frosinone,
+# Monza e Venezia non venivano nemmeno cercate.
+#
+# heXI numera le stagioni con gli anni per intero e separa le leghe con una
+# sigla propria. Le due forme che usa sono diverse fra loro — la rosa vuole
+# "SA_2026-2027", il feed "lineups_SA_2026_2027" — quindi si dichiarano qui
+# tutte e due invece di ricavarne una dall'altra a occhio.
+HEXI_DIR: Path = Path(leggi_env("HEXI_DIR", r"C:\dev\heXI"))
+
+SIGLA_HEXI: dict[str, str] = {
+    "ENG-Premier League": "PL", "ITA-Serie A": "SA", "ESP-La Liga": "LL",
+    "GER-Bundesliga": "BL1", "FRA-Ligue 1": "FL1",
+}
+
+
+def sigla_hexi(lega: str | None = None) -> str:
+    """La sigla con cui heXI chiama questo campionato. Vuota se non la sa."""
+    return SIGLA_HEXI.get(lega or LEGA_UNDERSTAT, "")
+
+
+def stagione_hexi(season: str | None = None, sep: str = "-") -> str:
+    """'2026-27' come lo scrive heXI: '2026-2027', o '2026_2027' nel feed."""
+    a = anno_understat(season)
+    return "%d%s%d" % (a, sep, a + 1)
+
+
+def hexi_rosa(season: str | None = None) -> Path:
+    """La rosa normalizzata della lega selezionata."""
+    return (HEXI_DIR / "data" / "normalized"
+            / ("%s_%s.json" % (sigla_hexi(), stagione_hexi(season))))
+
+
+def hexi_lineups(season: str | None = None) -> Path:
+    """Il feed Sportmonks delle formazioni, da cui si ricavano gli xG."""
+    return (HEXI_DIR / "data" / "raw" / "external" / "sportmonks" / "_raw_lineups"
+            / ("lineups_%s_%s.json" % (sigla_hexi(), stagione_hexi(season, "_"))))
+
+
 def file_esterno(prefisso: str, season: str | None = None,
                  slug: str | None = None) -> str:
     """Il nome di un file in `dati_esterni/`: porta la lega e la stagione.

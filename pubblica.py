@@ -132,6 +132,14 @@ def passi(stagione: str, lega: str = "") -> list[tuple[str, list[str] | None, st
         # un dato che prima o poi smette di aggiornarsi.
         ("infortuni", ["set_up_tpi_pro/aggiorna_infortuni.py", "--close-missing"],
          "gli infortunati di oggi da Transfermarkt"),
+        # Anche questo prima di parte1, che legge il file se c'e'. Per mesi non
+        # ci sara': heXI pubblica il feed della stagione quando lo pubblica, e
+        # fino ad allora il passo esce bene senza scrivere. Sta nella sequenza
+        # proprio per questo — l'alternativa era ricordarsene a mano una volta
+        # l'anno, che e' il modo in cui il file del 2025-26 e' rimasto l'unico
+        # mai prodotto.
+        ("difese", ["estrai_xg_concessi_hexi.py"],
+         "gli xG concessi a stagione intera, se heXI ha il feed"),
         ("archivio", None,
          "mette al sicuro i payload della stagione conclusa"),
         ("parte1", ["parte1_analisi.py"],
