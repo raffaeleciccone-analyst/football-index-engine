@@ -36,7 +36,7 @@ BASE_DIR   = Path(__file__).parent
 OUTPUT_DIR = config.cartella_uscita(BASE_DIR)
 PAYLOAD    = OUTPUT_DIR / "payload.json"
 PAYLOAD_FULL = OUTPUT_DIR / "payload_full.json"
-# Il repo che pubblica il sito di QUESTA lega: override con SERIE_A_DEMO_DIR.
+# Il repo che pubblica il sito di QUESTA lega: override con INDEX_DEMO_DIR.
 # Era "serie-a-index" per tutte le leghe, ed e' da qui che e' arrivato il danno
 # peggiore: la validazione della Premier veniva scritta sopra quella del Serie A,
 # che si ritrovava la pagina intitolata "Premier League Scout Index" con dentro
@@ -224,6 +224,21 @@ def _fatti_dataset(df_gp) -> dict:
     return out
 
 
+def _stagione_del_campione() -> str | None:
+    """La stagione dichiarata dal payload su cui girano le verifiche.
+
+    Si legge da li' e non da `config`: `config.SEASON_CORRENTE` e' la stagione
+    che il sito PUBBLICA, che al cambio d'annata non e' quella misurata — le
+    quindici verifiche girano sull'ultima conclusa. Prenderla da config
+    scriverebbe nel meta l'etichetta sbagliata proprio nel momento in cui la
+    distinzione conta.
+    """
+    try:
+        return json.loads(payload_corrente().read_text(encoding="utf-8")).get("stagione")
+    except Exception:
+        return None
+
+
 def payload_corrente() -> Path:
     """Il payload della stagione corrente su cui girano i test.
 
@@ -278,7 +293,7 @@ def load_payload() -> dict:
             "su una stagione non finita misurerebbero se stesse, e il risultato "
             "sovrascriverebbe validazione_sintesi.json.\n"
             "La validazione si rigenera sull'ultima stagione conclusa. Punta "
-            "SERIE_A_SEASON a quella e rilancia, oppure lascia in pagina la "
+            "INDEX_SEASON a quella e rilancia, oppure lascia in pagina la "
             "validazione gia' pubblicata: e' la stessa, e non e' scaduta."
         )
     return dati
@@ -1458,8 +1473,8 @@ def _rosa_hexi_della_lega():
     return Path("C:/dev/heXI/data/normalized") / ("%s_%d-%d.json" % (sigla, anno, anno + 1))
 
 
-HEXI_ROSTER = (Path(os.environ["SERIE_A_HEXI_ROSTER"])
-               if os.environ.get("SERIE_A_HEXI_ROSTER") else _rosa_hexi_della_lega())
+HEXI_ROSTER = (Path(config.leggi_env("HEXI_ROSTER"))
+               if config.leggi_env("HEXI_ROSTER") else _rosa_hexi_della_lega())
 HEXI_STAGIONE = "%d/%d" % (config.anno_understat(), config.anno_understat() + 1)
 
 
@@ -2923,6 +2938,14 @@ def main():
             "r": val_r,
             "soglie": dict(SOGLIE),
             "meta": {"n_giocatori": len(players),
+                     # Su quale stagione sono stati misurati. Non c'era, e la
+                     # pagina finiva per dire "i 356 giocatori qualificati" al
+                     # presente accanto a una classifica che ne mostrava 315:
+                     # due numeri veri di due annate diverse, senza niente che
+                     # lo dicesse. Chi misura sa quale stagione ha in mano,
+                     # quindi lo scrive lui invece di lasciarlo indovinare.
+                     "stagione": _stagione_del_campione(),
+                     "misurato_il": time.strftime("%Y-%m-%d"),
                      "campione_file": payload_corrente().name,
                      "campione_full": payload_corrente().name == PAYLOAD_FULL.name,
                      # La pagina descrive anche il dataset: pure quei numeri
@@ -3127,9 +3150,67 @@ def solo_pagina() -> None:
         log.info(f"OK → {DEMO_DIR / out.name}  (copia per repo demo)")
 
 
+def stagione_misurata() -> str | None:
+    """La stagione su cui girano i numeri oggi pubblicati, se dichiarata."""
+    fonte = OUTPUT_DIR / "validazione_dati.json"
+    if not fonte.is_file():
+        return None
+    try:
+        return json.loads(fonte.read_text(encoding="utf-8")).get("meta", {}).get("stagione")
+    except Exception:
+        return None
+
+
+def aggiorna() -> None:
+    """Rimisura se c'e' una stagione nuova da misurare, altrimenti riscrive.
+
+    **Il problema che risolve.** Le quindici verifiche girano su una stagione
+    conclusa e non si rifanno a ogni giornata: il runbook lo vieta, e lo
+    script si ferma da solo se ci si prova. Giusto. Ma "non si rifanno mai"
+    non e' la stessa cosa, e nessuno diceva quando invece andavano rifatte:
+    restava un passo a mano, una volta l'anno, in mezzo al cambio stagione —
+    cioe' il posto dove i passi a mano si perdono. Gli infortuni erano fermi
+    da quattro mesi per la stessa ragione.
+
+    **La condizione.** Il campione su cui girano le verifiche e'
+    `payload_full.json`, e dichiara la sua stagione. Il meta dell'ultima
+    misurazione dichiara la propria. Finche' combaciano non c'e' niente da
+    fare. Quando smettono — cioe' quando il campione diventa quello
+    dell'annata appena conclusa — la misurazione va rifatta, e si rifa' qui,
+    al primo giro utile.
+
+    Non e' "rimisurare spesso": e' rimisurare **una volta per stagione**, il
+    giorno in cui esiste una stagione intera nuova da guardare.
+    """
+    campione = None
+    try:
+        campione = json.loads(payload_corrente().read_text(encoding="utf-8")).get("stagione")
+    except Exception:
+        pass
+    misurata = stagione_misurata()
+
+    if campione and misurata and campione != misurata:
+        log.info(f"Validazione: il campione e' della {campione}, i numeri "
+                 f"pubblicati della {misurata}. Rimisuro.")
+        main()
+        return
+
+    if campione and not misurata:
+        log.info(f"Validazione: nessuna misurazione dichiarata, campione della "
+                 f"{campione}. Rimisuro.")
+        main()
+        return
+
+    log.info(f"Validazione: i numeri sono gia' della {misurata or '?'}, "
+             f"come il campione. Riscrivo solo la pagina.")
+    solo_pagina()
+
+
 if __name__ == "__main__":
     import sys as _sys
-    if "--solo-pagina" in _sys.argv[1:]:
+    if "--aggiorna" in _sys.argv[1:]:
+        aggiorna()
+    elif "--solo-pagina" in _sys.argv[1:]:
         solo_pagina()
     else:
         main()

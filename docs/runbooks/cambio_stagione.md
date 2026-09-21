@@ -170,7 +170,7 @@ export INDEX_SEASON=2026-27
 | 8 | `python pagina_home.py` | la homepage |
 | 9 | `python pagina_guida.py` | il metodo (nav + prime sei) |
 | 10 | `python pagina_squadra.py` | le pagine squadra, e toglie le retrocesse |
-| 11 | `python parte3_valida_tpi.py --solo-pagina` | riscrive la validazione **senza rimisurare** |
+| 11 | `python parte3_valida_tpi.py --aggiorna` | riscrive la validazione, e **rimisura** se il campione e' di una stagione non ancora misurata |
 | 12 | link al CSV nel `README.md` del repo del sito | l'unica riga a mano rimasta |
 | 13 | `git add -A && git commit && git push` nel repo del sito | pubblica |
 
@@ -190,14 +190,19 @@ cp payload_full.json  payload_full_2025-26.json
 
 ## 2 · Cosa NON si fa
 
-**Non si rilancia `parte3_valida_tpi.py` senza `--solo-pagina`.** Le quindici
+**Non si rilancia `parte3_valida_tpi.py` a mani nude.** Le quindici
 verifiche confrontano l'indice di meta' strada con la classifica di fine
 stagione: su una stagione di tre giornate la "fine" e' la terza giornata, e
 ognuna misurerebbe se stessa. Ne uscirebbe una pagina piena di numeri altissimi
 e senza senso, che sovrascrive quelli veri in `validazione_sintesi.json`. Lo
-script si ferma da solo, ma la strada giusta e' `--solo-pagina`: riscrive la
-pagina dai risultati salvati in `validazione_dati.json`, senza toccare un
-numero. Serve perche' anche la validazione porta la barra con la stagione
+script si ferma da solo, ma la strada giusta e' `--aggiorna`: riscrive la
+pagina dai risultati salvati in `validazione_dati.json` senza toccare un
+numero, **e rimisura solo quando c'e' motivo** — cioe' quando il campione
+(`payload_full.json`) dichiara una stagione diversa da quella dell'ultima
+misurazione. Succede una volta l'anno, qui, ed e' il passo che prima stava
+scritto solo in questo runbook: una cosa da ricordarsi a mano dodici mesi
+dopo l'ultima volta che la si era fatta. `--solo-pagina` resta, per
+riscrivere e basta. Serve perche' anche la validazione porta la barra con la stagione
 dentro, e senza questo passo sarebbe l'unica pagina a dire ancora "25/26".
 
 **Non si lancia `parte1_analisi.py --top-n 0`.** `payload_full.json` e i dodici

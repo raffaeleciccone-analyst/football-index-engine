@@ -323,20 +323,47 @@ def _hero(d: dict) -> str:
                   f'<span {bi(li, le)}>{li}</span></div>' for v, li, le in cifre)
     # Prima a cosa serve, poi dove perde. Al contrario &mdash; com'era &mdash; chi
     # legge trenta secondi porta via solo la sconfitta, e non sa nemmeno di cosa.
+    # Su quale stagione sono stati misurati questi numeri.
+    #
+    # Le quindici verifiche girano su una stagione CONCLUSA, non su quella in
+    # corso: mezza dozzina di giornate non bastano a dire se un ordinamento
+    # regge, e rifarle ogni settimana produrrebbe numeri che ballano senza
+    # significare niente. E' una scelta, ed e' scritta in `solo_pagina()`.
+    #
+    # Il guaio era che la pagina non la dichiarava. Diceva "il TPI ordina i 356
+    # giocatori qualificati" al presente, mentre la classifica pubblicata
+    # accanto ne mostrava 315: due numeri veri, di due stagioni diverse, e
+    # nessun modo per chi legge di sapere che non sono in contraddizione. Su
+    # una pagina la cui unica promessa e' far controllare i conti, il numero
+    # senza la sua stagione e' il difetto peggiore che ci possa stare.
+    _st = meta.get("stagione")
+    _gg = meta.get("giornata_max")
+    _dove_it = (f" della stagione {config.etichetta_stagione(_st)}" if _st else "")
+    _dove_en = (f" in {config.etichetta_stagione(_st)}" if _st else "")
+    _quante_it = (f", {_gg} giornate" if _gg else "")
+    _quante_en = (f", {_gg} matchdays" if _gg else "")
+
     lede_it = (f"Il <strong>TPI</strong> ordina i {meta['n_giocatori']} giocatori qualificati "
-               f"della {config.LEGA_NOME} per impatto offensivo. Serve a decidere <strong>chi guardare</strong>: "
+               f"della {config.LEGA_NOME}{_dove_it} per impatto offensivo. Serve a decidere "
+               f"<strong>chi guardare</strong>: "
                f"restringere una lista lunga, riconoscere chi sta crescendo. Non serve a prevedere "
                f"quanti gol far&agrave; qualcuno il mese prossimo, e questa pagina spiega "
                f"perch&eacute;.")
     lede_en = (f"The <strong>TPI</strong> ranks {config.LEGA_NOME}&rsquo;s {meta['n_giocatori']} qualified "
-               f"players by attacking impact. It is there to decide <strong>who to look at</strong>: "
+               f"players{_dove_en} by attacking impact. It is there to decide <strong>who to look at</strong>: "
                f"to shorten a long list, to spot who is on the way up. It is not there to forecast "
                f"how many goals someone will score next month, and this page explains why.")
+    _misura_it = (f" Misurate sulla stagione {config.etichetta_stagione(_st)} conclusa{_quante_it}, "
+                  f"non su quella in corso: poche giornate non bastano a dire se un ordinamento regge."
+                  if _st else "")
+    _misura_en = (f" Measured on the completed {config.etichetta_stagione(_st)} season{_quante_en}, "
+                  f"not on the one in progress: a handful of matchdays cannot say whether a ranking holds."
+                  if _st else "")
     sub_it = (f"{meta['n_verifiche']} verifiche, compresa quella costruita apposta per bocciarlo. "
               f"Dove l&rsquo;indice perde &egrave; scritto, con l&rsquo;intervallo di confidenza "
-              f"accanto.")
+              f"accanto.{_misura_it}")
     sub_en = (f"{meta['n_verifiche']} checks, including the one built to fail it. Where the index "
-              f"loses is written down, with the confidence interval next to it.")
+              f"loses is written down, with the confidence interval next to it.{_misura_en}")
     return f"""<header class="hero riga">
   <div></div>
   <div>
