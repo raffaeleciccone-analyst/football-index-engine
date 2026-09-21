@@ -1152,12 +1152,104 @@ def _tabella(d: dict) -> str:
 
 
 # ══════════════════════════════════════════════════════════════════
+# La stagione in corso
+# ══════════════════════════════════════════════════════════════════
+def _riga_in_corso(e: dict) -> str:
+    """Una verifica: come si chiama, e cosa ha detto — o perche' aspetta."""
+    it, en = e.get("it", ""), e.get("en", "")
+    if not e.get("disponibile"):
+        p_it = e.get("perche", "")
+        p_en = e.get("perche_en") or p_it
+        return (f'<tr class="attesa"><td {bi(it, en)}>{it}</td>'
+                f'<td class="num">&mdash;</td>'
+                f'<td {bi("aspetta: " + p_it, "waiting: " + p_en)}>'
+                f'aspetta: {p_it}</td></tr>')
+    r = e.get("esito") or {}
+    # Il numero che riassume, quando c'e' un numero che riassume.
+    for chiave, forma in (("rho", "&rho; = %.3f"), ("r_spearman", "&rho; = %.3f"),
+                          ("r", "r = %.3f"), ("r_corr", "r = %.3f"),
+                          ("overlap_pct", "%d%%"),
+                          ("spearman_median", "&rho; = %.4f")):
+        v = r.get(chiave)
+        if isinstance(v, (int, float)):
+            val = forma % v
+            break
+    else:
+        val = "&check;"
+    n = r.get("n") or r.get("n_pro") or r.get("n_giocatori")
+    su = (f"su {n}" if n else "")
+    su_en = (f"on {n}" if n else "")
+    return (f'<tr><td {bi(it, en)}>{it}</td><td class="num">{val}</td>'
+            f'<td {bi(su, su_en)}>{su}</td></tr>')
+
+
+def _cap_in_corso(dati: dict) -> str:
+    """Le verifiche che non hanno bisogno di un futuro, sulla stagione aperta.
+
+    Perche' e' un blocco a parte e non un numero in piu' nella pagina: i numeri
+    qui sopra vengono da una stagione **conclusa**, questi da una **in corso**,
+    e mescolarli sarebbe la stessa bugia che la pagina ha appena smesso di
+    dire. Restano separati, con la giornata scritta sopra.
+
+    Perche' non ci sono tutte: perche' le altre confrontano l'indice di meta'
+    strada con la classifica di fine anno, e la fine non e' ancora successa.
+    Quelle che ci sono non guardano avanti — chiedono se l'ordinamento di oggi
+    e' coerente con se stesso e con fonti esterne di oggi. Quelle che mancano
+    dicono cosa aspettano, invece di sparire.
+    """
+    ic = dati.get("in_corso") or {}
+    ver = ic.get("verifiche") or {}
+    if not ver:
+        return ""
+    st = config.etichetta_stagione(ic.get("stagione")) if ic.get("stagione") else "?"
+    gg, tot = ic.get("giornate"), ic.get("giornate_totali")
+    quante = f"{gg} giornate su {tot}" if gg and tot else (f"{gg} giornate" if gg else "")
+    quante_en = f"{gg} of {tot} matchdays" if gg and tot else (f"{gg} matchdays" if gg else "")
+    n_ok, n_tot = ic.get("n_fatte", 0), ic.get("n_totali_pagina", len(ver))
+
+    let_it = (f"I numeri qui sopra sono della stagione conclusa, e restano quelli: "
+              f"le verifiche che contano confrontano l&rsquo;indice di met&agrave; "
+              f"strada con la classifica di fine anno, e questa stagione non &egrave; "
+              f"finita. Ma non tutte guardano avanti. Queste {n_ok} chiedono se "
+              f"l&rsquo;ordinamento di oggi &egrave; coerente con s&eacute; stesso e "
+              f"con fonti esterne di oggi &mdash; i voti, il mercato, i pesi "
+              f"dichiarati &mdash; e si possono misurare adesso, su {st}, "
+              f"{quante}, {ic.get('n_giocatori', 0)} giocatori qualificati. "
+              f"Le altre {n_tot - n_ok} dicono cosa aspettano.")
+    let_en = (f"The numbers above are from the completed season, and they stay there: "
+              f"the checks that matter compare the mid-season index with the "
+              f"end-of-season ranking, and this season has not ended. But not all of "
+              f"them look ahead. These {n_ok} ask whether today&rsquo;s ranking is "
+              f"consistent with itself and with today&rsquo;s outside sources &mdash; "
+              f"ratings, market value, the declared weights &mdash; and can be measured "
+              f"now, on {st}, {quante_en}, {ic.get('n_giocatori', 0)} qualified players. "
+              f"The other {n_tot - n_ok} say what they are waiting for.")
+
+    righe = "".join(_riga_in_corso(ver[k]) for k in ver)
+    return f"""<section class="cap riga">
+  <div class="cap-num">&middot;</div>
+  <div>
+    {el("h2", f"Sulla stagione in corso &mdash; {st}", f"On the season in progress &mdash; {st}")}
+    <p class="prosa" style="margin-bottom:26px" {bi(let_it, let_en)}>{let_it}</p>
+    <table>
+      <thead><tr>
+        <th {bi("Verifica", "Check")}>Verifica</th>
+        <th {bi("Misura", "Measure")}>Misura</th>
+        <th {bi("Campione", "Sample")}>Campione</th>
+      </tr></thead>
+      <tbody>{righe}</tbody>
+    </table>
+  </div>
+</section>"""
+
+
+# ══════════════════════════════════════════════════════════════════
 # Pagina
 # ══════════════════════════════════════════════════════════════════
 def render(dati: dict) -> str:
     corpo = "\n".join((_hero(dati), _cap_regge(dati), _cap_prova(dati),
                        _cap_contesto(dati), _cap_segue(dati), _cap_metodo(dati),
-                       _tabella(dati)))
+                       _tabella(dati), _cap_in_corso(dati)))
     return guscio(
         f"Validazione &mdash; {config.SITO_NOME}",
         "Le verifiche del TPI: cosa regge, cosa no, e come sono misurate.",
