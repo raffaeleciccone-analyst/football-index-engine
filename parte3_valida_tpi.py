@@ -3137,6 +3137,10 @@ def solo_pagina() -> None:
             f"senza --solo-pagina, sulla stagione conclusa."
         )
     dati = json.loads(fonte.read_text(encoding="utf-8"))
+    # Il blocco della stagione in corso vive in un file suo e si aggiunge qui:
+    # cosi' la pagina riscritta lo porta anche quando i numeri a stagione
+    # intera non si toccano, che e' il caso di tutti i giorni.
+    dati["in_corso"] = dati_in_corso()
     import parte3_pagina
     html = parte3_pagina.render(dati)
     from pagina_stile import assicura_css
@@ -3148,6 +3152,204 @@ def solo_pagina() -> None:
     if DEMO_DIR.is_dir():
         (DEMO_DIR / out.name).write_bytes(out.read_bytes())
         log.info(f"OK → {DEMO_DIR / out.name}  (copia per repo demo)")
+
+
+# ════════════════════════════════════════════════════════════════
+#  La stagione in corso — il sottoinsieme che si puo' misurare adesso
+# ════════════════════════════════════════════════════════════════
+# Quindici verifiche non si possono rifare a meta' stagione: quasi tutte
+# confrontano l'indice di meta' strada con la classifica di fine anno, e su
+# cinque giornate la "fine" e' la quinta — ognuna misurerebbe se stessa. Ma
+# "quasi tutte" non e' "tutte", e la differenza non e' una soglia: e' che
+# alcune **non guardano avanti**. Chiedono se l'ordinamento di oggi e' coerente
+# con se stesso e con fonti esterne di oggi: l'accordo coi voti, l'accordo col
+# valore di mercato, quanto l'ordine cambia se si toccano i pesi. Quelle si
+# possono misurare alla quinta giornata e vogliono dire qualcosa.
+#
+# Finche' non si e' fatto questo, chi guardava il sito a settembre non aveva
+# **niente** sulla stagione che stava leggendo: solo i numeri dell'annata prima,
+# giusti ma di un'altra cosa. Meta' delle verifiche e' piu' di zero.
+#
+# Il vincolo che rende tutto questo sicuro: qui non si scrive MAI
+# `validazione_dati.json` ne' `validazione_sintesi.json`. Escono in un file
+# loro, e la pagina li mostra in un blocco separato che dichiara giornata e
+# stagione. I numeri a stagione intera restano intoccati — sovrascriverli con
+# cinque giornate e' il danno che il runbook vieta, e vietarlo qui e' una riga
+# di codice invece di una raccomandazione.
+IN_CORSO_FILE = "validazione_in_corso.json"
+
+# Cosa si prova, in ordine di lettura. `chiave` finisce nel JSON.
+VERIFICHE_IN_CORSO = [
+    ("fanta", "valida_correlazione_fanta",
+     "Accordo coi voti Fantacalcio",
+     "Agreement with Fantacalcio ratings"),
+    ("mercato", "valida_valore_mercato",
+     "Accordo col valore di mercato",
+     "Agreement with market value"),
+    ("top10", "valida_top10",
+     "Struttura del primo gruppo",
+     "Structure of the top group"),
+    ("pro", "valida_tpi_pro",
+     "Il TPI Pro contro il TPI base",
+     "TPI Pro against the base TPI"),
+    ("sensibilita", "valida_sensibilita",
+     "Sensibilit&agrave; ai pesi dichiarati",
+     "Sensitivity to the declared weights"),
+    ("v2", "valida_v2_indices",
+     "Indici Et&agrave; e Tenuta fisica",
+     "Age and Physical reliability indices"),
+    ("calibrazione", "valida_calibration",
+     "Calibrazione per decili",
+     "Calibration by decile"),
+]
+
+
+# Perche' una verifica non si puo' ancora fare, detto a chi legge il sito e non
+# a chi ha scritto il codice. Il messaggio tecnico resta nel log.
+#
+# Due lingue, perche' il sito ne ha due: la prima versione scriveva "la tenuta
+# fisica non si calcola prima dell'ottava giornata" anche sulla pagina inglese,
+# sotto la parola "waiting". Una riga italiana in mezzo a una tabella inglese e'
+# lo stesso difetto che il motore ha passato la giornata a togliere, in piccolo.
+MOTIVI_ATTESA = {
+    "v2": ("la tenuta fisica non si calcola prima dell'ottava giornata",
+           "physical reliability is not computed before the eighth matchday"),
+    "calibrazione": ("servono almeno trenta giocatori con un valore atteso",
+                     "at least thirty players with an expected value are needed"),
+    "fanta": ("i voti Fantacalcio esistono solo per la Serie A",
+              "Fantacalcio ratings exist for Serie A only"),
+    "top10": ("il riferimento WhoScored e' un elenco scritto a mano di giocatori "
+              "di Serie A",
+              "the WhoScored reference is a hand-written list of Serie A players"),
+}
+_ATTESA_GENERICA = ("i dati di questa stagione non bastano ancora",
+                    "this season's data is not enough yet")
+
+
+def _motivo_attesa(chiave: str, dichiarato: str | None = None) -> tuple[str, str]:
+    """La coppia (italiano, inglese). Quella dichiarata dalla verifica vince.
+
+    Se una verifica sa da sola perche' non si applica — `non_applicabile` con
+    il suo `motivo` — quella frase e' piu' precisa di qualunque elenco tenuto
+    qui: viene da chi conosce il caso. L'elenco serve alle altre.
+    """
+    coppia = MOTIVI_ATTESA.get(chiave, _ATTESA_GENERICA)
+    if dichiarato and chiave not in MOTIVI_ATTESA:
+        return (dichiarato, dichiarato)
+    return coppia
+
+
+def campione_in_corso() -> Path:
+    """Il campione della stagione in corso: tutti i qualificati, non i primi 100.
+
+    `payload_lista.json` e' la lista intera che la pagina della classifica
+    carica a richiesta. Il taglio ai primi cento non e' neutro — confrontare
+    fra loro solo i migliori comprime la varianza e attenua ogni correlazione —
+    quindi si prende la lista piena, ed e' lo stesso motivo per cui le verifiche
+    a stagione intera girano su `payload_full.json` invece che su `payload.json`.
+    """
+    lista = OUTPUT_DIR / "payload_lista.json"
+    return lista if lista.is_file() else PAYLOAD
+
+
+def valida_in_corso() -> dict:
+    """Misura il sottoinsieme e scrive il suo file. Non tocca gli altri."""
+    src = campione_in_corso()
+    if not src.is_file():
+        log.warning(f"In corso: nessun campione ({src.name}), niente da misurare")
+        return {}
+    dati = json.loads(src.read_text(encoding="utf-8"))
+    players = dati.get("players") or []
+    if not players:
+        log.warning("In corso: campione senza giocatori")
+        return {}
+
+    esiti, fatte, rimandate = {}, 0, 0
+    for chiave, nome_f, et_it, et_en in VERIFICHE_IN_CORSO:
+        f = globals().get(nome_f)
+        if f is None:
+            esiti[chiave] = {"disponibile": False, "perche": "verifica assente",
+                             "it": et_it, "en": et_en}
+            rimandate += 1
+            continue
+        try:
+            r = f(players)
+        except Exception as e:
+            # Una verifica che non regge questi dati non e' un guasto: e' una
+            # verifica che aspetta. Il PRI, per dire, non esiste prima dell'ottava
+            # giornata, e l'indice Eta'+Tenuta senza PRI non si calcola.
+            # Il nome dell'eccezione resta nel log, non sulla pagina: a chi
+            # legge "TypeError" non dice niente, e una pagina che deve far
+            # controllare i conti non parla in gergo di chi l'ha scritta.
+            log.debug(f"{chiave}: {type(e).__name__}: {e}")
+            p_it, p_en = _motivo_attesa(chiave)
+            esiti[chiave] = {"disponibile": False, "perche": p_it, "perche_en": p_en,
+                             "it": et_it, "en": et_en}
+            rimandate += 1
+            continue
+        # Quattro modi di dire "non adesso", e vanno riconosciuti tutti.
+        # `non_applicabile` e' il piu' esplicito — lo usa chi sa di dipendere da
+        # una fonte che quella lega non ha. Gli altri sono verifiche che tornano
+        # un risultato vuoto: `has_data` falso, oppure zero righe agganciate, che
+        # e' il caso dei voti Fantacalcio sulla Premier. Senza l'ultimo
+        # controllo la tabella inglese mostrava una spunta accanto a una
+        # verifica che non aveva misurato niente.
+        vuota = isinstance(r, dict) and (
+            r.get("has_data") is False
+            or r.get("disponibile") is False
+            or r.get("non_applicabile") is True
+            or (r.get("n") == 0)
+        )
+        if not r or vuota:
+            # Anche qui il messaggio interno resta nel log: "Test M
+            # (calibration): 0 giocatori (servono >=30)" e' il nome che la
+            # verifica ha in casa, non una frase per chi legge il sito.
+            dichiarato = None
+            if isinstance(r, dict):
+                if r.get("msg"):
+                    log.debug(f"{chiave}: {r['msg']}")
+                dichiarato = r.get("motivo")
+            p_it, p_en = _motivo_attesa(chiave, dichiarato)
+            esiti[chiave] = {"disponibile": False, "perche": p_it, "perche_en": p_en,
+                             "it": et_it, "en": et_en}
+            rimandate += 1
+            continue
+        esiti[chiave] = {"disponibile": True, "esito": r, "it": et_it, "en": et_en}
+        fatte += 1
+
+    fuori = {
+        "stagione": dati.get("stagione"),
+        "giornate": dati.get("n_giornate"),
+        "giornate_totali": dati.get("giornate_totali"),
+        "n_giocatori": len(players),
+        "campione_file": src.name,
+        "misurato_il": time.strftime("%Y-%m-%d"),
+        "n_fatte": fatte,
+        "n_rimandate": rimandate,
+        "n_totali_pagina": len(VERIFICHE_IN_CORSO),
+        "verifiche": esiti,
+    }
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    (OUTPUT_DIR / IN_CORSO_FILE).write_text(
+        json.dumps(fuori, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+    log.info(f"In corso: {fatte} verifiche su {len(VERIFICHE_IN_CORSO)} "
+             f"({dati.get('stagione')}, {dati.get('n_giornate')} giornate, "
+             f"{len(players)} giocatori)")
+    for chiave, e in esiti.items():
+        if not e["disponibile"]:
+            log.info(f"   rimandata: {chiave} — {e['perche']}")
+    return fuori
+
+
+def dati_in_corso() -> dict:
+    """Il file della stagione in corso, se c'e'."""
+    f = OUTPUT_DIR / IN_CORSO_FILE
+    if not f.is_file():
+        return {}
+    try:
+        return json.loads(f.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
 
 
 def stagione_misurata() -> str | None:
@@ -3208,7 +3410,11 @@ def aggiorna() -> None:
 
 if __name__ == "__main__":
     import sys as _sys
-    if "--aggiorna" in _sys.argv[1:]:
+    if "--in-corso" in _sys.argv[1:]:
+        valida_in_corso()
+        solo_pagina()
+    elif "--aggiorna" in _sys.argv[1:]:
+        valida_in_corso()
         aggiorna()
     elif "--solo-pagina" in _sys.argv[1:]:
         solo_pagina()
