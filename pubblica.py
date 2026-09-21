@@ -154,8 +154,12 @@ def passi(stagione: str, lega: str = "") -> list[tuple[str, list[str] | None, st
          "il metodo"),
         ("squadre", ["pagina_squadra.py"],
          "le pagine squadra, e toglie quelle uscite dal campionato"),
-        ("validazione", ["parte3_valida_tpi.py", "--solo-pagina"],
-         "riscrive la pagina SENZA rimisurare"),
+        # `--aggiorna`, non `--solo-pagina`: riscrive la pagina come prima, ma
+        # se il campione e' di una stagione che non e' ancora stata misurata
+        # rifa' le quindici verifiche. Succede una volta l'anno, al cambio
+        # stagione, e prima era un passo a mano dentro il runbook.
+        ("validazione", ["parte3_valida_tpi.py", "--aggiorna"],
+         "riscrive la pagina, e rimisura se c'e' una stagione nuova"),
     ]
     # La pagina Pro entra per le leghe che ce l'hanno nel menu, cioe' lo decide
     # `config` e non una riga scritta qui. Fino al 20/9/2026 non era nella
