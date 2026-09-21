@@ -770,6 +770,64 @@ def check_credentials_in_code(report: Report) -> None:
 # Importa i plausibility check (engine MET-001..010, file dedicato)
 from .checks_metric import METRIC_CHECKS
 
+def check_copertura_game_log(report: Report) -> None:
+    """CON-004: partite giocate che non stanno in `t_squadra_game_log`.
+
+    **Perche' esiste.** Il contesto "difese solide" ordina le squadre per xG
+    concessi, e li prende da questa tabella. L'anno scorso la tabella copriva
+    28 giornate su 38, e su dieci giornate mancanti la classifica cambiava
+    davvero: a stagione intera il Bologna entrava fra le sei piu' solide e il
+    Milan ne usciva, passando da terzo a ottavo. Per rimediare e' stata presa
+    una fonte esterna — il feed Sportmonks che heXI raccoglie — e le difese si
+    leggono da li' quando c'e'.
+
+    Il difetto vero pero' non era la fonte che mancava: era **il nostro
+    registro che restava indietro senza dirlo**. Una fonte esterna copre il
+    buco, non lo segnala, e infatti nessuno sapeva quando il buco si fosse
+    aperto ne' quanto fosse grande: si e' scoperto guardando i numeri a fine
+    stagione. Questo controllo lo misura mentre succede, cosi' la fonte
+    esterna torna a essere un di piu' invece che una toppa.
+
+    Oggi la copertura e' intera su entrambi i campionati. Il giorno che non lo
+    sara', si sapra' quel giorno.
+    """
+    import config
+
+    giocate = fetch_one("""
+        SELECT COUNT(*) FROM calendario
+        WHERE season = %s AND goal_casa IS NOT NULL
+    """, (config.SEASON_CORRENTE,))[0]
+    if not giocate:
+        return
+
+    nel_log = fetch_one("""
+        SELECT COUNT(DISTINCT cal.id)
+        FROM calendario cal
+        JOIN t_squadra_game_log sgl ON sgl.calendario_id = cal.id
+        WHERE cal.season = %s AND cal.goal_casa IS NOT NULL
+    """, (config.SEASON_CORRENTE,))[0]
+
+    mancanti = giocate - nel_log
+    if not mancanti:
+        return
+
+    quota = mancanti / giocate
+    report.add(Finding(
+        code="CON-004", area=Area.CONSISTENCY,
+        severity=Severity.HIGH if quota > 0.1 else Severity.MEDIUM,
+        title=f"{mancanti} partite giocate fuori dal registro per squadra "
+              f"({nel_log}/{giocate})",
+        table="t_squadra_game_log", rows_affected=mancanti,
+        description="Le difese solide si ordinano per xG concessi, che si "
+                    "leggono da qui: su queste partite l'ordinamento non ha "
+                    "i dati e la classifica si sposta.",
+        root_cause="deriva_game_log non e' stato rilanciato dopo l'ultimo "
+                   "scarico, oppure quelle partite non sono arrivate.",
+        fix_available=True,
+        fix_strategy="python deriva_game_log.py --season <stagione> --esegui",
+    ))
+
+
 CHECKS = [
     check_schema_overview,
     check_missing_unique_keys,
@@ -781,6 +839,7 @@ CHECKS = [
     check_minutes_consistency,
     check_partite_field_zero,
     check_xg_consistency,
+    check_copertura_game_log,
     check_calendario_giornate,
     check_temporal_anomalies,
     check_missing_birthdates,
