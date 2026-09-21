@@ -31,6 +31,16 @@ if _FIX_SRC.is_dir() and str(_FIX_SRC) not in sys.path:
     sys.path.insert(0, str(_FIX_SRC))
 
 from lib.db import cursor, fetch_one, fetch_all, DB_NAME  # noqa: E402
+# Lo stesso filtro che usano i controlli, non una copia: `giocatori.minuti`,
+# `.partite` e `.xg` descrivono UNA stagione — li scrive Understat da
+# read_player_season_stats — mentre il database ne tiene piu' d'una. I controlli
+# l'avevano imparato, le riparazioni no: sommavano tutte le righe per partita di
+# tutti gli anni e scrivevano il totale in una colonna che ne descrive uno.
+# Cioe' il fix rompeva la colonna che il check aveva appena trovato sana, e al
+# giro dopo il check trovava un disallineamento piu' grande di prima. Lo diceva
+# gia' la fix_strategy scritta dentro CON-001 — "il filtro sulla stagione e'
+# obbligatorio" — ma era una frase in un messaggio, non una riga di codice.
+from lib.checks import _solo_stagione_corrente  # noqa: E402
 from lib.log import get_logger  # noqa: E402
 from lib.journal import append_event, new_run_id  # noqa: E402
 
@@ -52,10 +62,11 @@ def fix_con_001(dry_run: bool) -> dict:
     with cursor() as (c, _):
         c.execute("""
             SELECT g.id, g.minuti, COALESCE(SUM(gp.minuti),0) AS real_min
-            FROM giocatori g LEFT JOIN giocatore_partita gp ON gp.giocatore_id=g.id
+            FROM giocatori g LEFT JOIN giocatore_partita gp
+                   ON gp.giocatore_id=g.id%s
             GROUP BY g.id, g.minuti
             HAVING ABS(g.minuti - COALESCE(SUM(gp.minuti),0)) > 30
-        """)
+        """ % _solo_stagione_corrente())
         rows = c.fetchall()
         log.info(f"CON-001: {len(rows)} giocatori da riallineare")
         if dry_run:
@@ -74,10 +85,10 @@ def fix_con_002(dry_run: bool) -> dict:
         c.execute("""
             SELECT g.id, COUNT(*) AS n
             FROM giocatori g
-            JOIN giocatore_partita gp ON gp.giocatore_id=g.id
+            JOIN giocatore_partita gp ON gp.giocatore_id=g.id%s
             WHERE gp.minuti > 0
             GROUP BY g.id
-        """)
+        """ % _solo_stagione_corrente())
         rows = c.fetchall()
         log.info(f"CON-002: {len(rows)} giocatori avranno partite ricalcolate")
         if dry_run:
@@ -99,7 +110,8 @@ def fix_con_003(dry_run: bool) -> dict:
         c.execute(f"""
             SELECT g.id,
                    {', '.join(f'COALESCE(SUM(gp.{f}),0)' for f in fields)}
-            FROM giocatori g LEFT JOIN giocatore_partita gp ON gp.giocatore_id=g.id
+            FROM giocatori g LEFT JOIN giocatore_partita gp
+                   ON gp.giocatore_id=g.id{_solo_stagione_corrente()}
             GROUP BY g.id
         """)
         rows = c.fetchall()

@@ -123,6 +123,15 @@ def passi(stagione: str, lega: str = "") -> list[tuple[str, list[str] | None, st
          "il game log per squadra"),
         ("anagrafica", ["anagrafica_da_hexi.py", "--esegui"],
          "rose e ruoli da heXI"),
+        # Prima di parte1, perche' l'indice li legge. Questo passo non c'era, e
+        # non per una decisione: lo script esisteva e non lo chiamava nessuno.
+        # Si e' visto il 20/9/2026 — gli ultimi infortuni della Serie A erano
+        # del 4 maggio, la Premier non ne aveva mai avuto uno, e il modulatore
+        # di tenuta fisica del TPI Pro lavorava su una tabella ferma da quattro
+        # mesi senza che niente lo dicesse. Un dato che si aggiorna a mano e'
+        # un dato che prima o poi smette di aggiornarsi.
+        ("infortuni", ["set_up_tpi_pro/aggiorna_infortuni.py", "--close-missing"],
+         "gli infortunati di oggi da Transfermarkt"),
         ("archivio", None,
          "mette al sicuro i payload della stagione conclusa"),
         ("parte1", ["parte1_analisi.py"],
