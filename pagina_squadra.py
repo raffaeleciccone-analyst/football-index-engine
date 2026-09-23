@@ -83,6 +83,25 @@ def _carica() -> dict:
             log.info(f"payload_full.json e' la stagione {dati.get('stagione')} e il "
                      f"sito pubblica la {pay.get('stagione')}: le pagine squadra si "
                      f"scrivono dal payload pubblicato.")
+
+    # L'elenco intero della stagione in corso, che `payload_full.json` sarebbe
+    # se si rigenerasse. Senza, le pagine si scrivono sui primi cento, e i primi
+    # cento non sono il campionato: una squadra che non ne ha nemmeno uno non
+    # riceve la pagina, e `_togli_squadre_uscite` la legge come retrocessa e la
+    # cancella. Successo il 23/9/2026 al Cagliari, che di qualificati ne aveva
+    # dieci — il giro precedente ne aveva due nei cento solo perche' due
+    # carriere spezzate contavano doppio, e una volta ricucite sono scese.
+    # `payload_lista.json` porta gli stessi campi e il `rank` vero su tutti.
+    lista = OUTPUT_DIR / "payload_lista.json"
+    if lista.is_file():
+        try:
+            tutti = json.loads(lista.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            tutti = None
+        if tutti and tutti.get("stagione") == pay.get("stagione") and tutti.get("players"):
+            pay = dict(pay, players=tutti["players"])
+            log.info(f"pagine squadra su tutti i {len(tutti['players'])} "
+                     f"qualificati, non sui primi cento.")
     return pay
 
 

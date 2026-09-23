@@ -16,6 +16,7 @@ da lanciare a mano una volta l'anno — che e' il modo in cui il file del 2025-2
 e' rimasto l'unico mai prodotto.
 """
 import importlib
+import os
 import re
 import subprocess
 import sys
@@ -91,11 +92,45 @@ def test_nessuno_si_scrive_il_percorso_a_mano(modulo):
     assert not colpevoli, f"{modulo}: percorso di heXI scritto a mano -> {colpevoli}"
 
 
-def test_un_feed_non_ancora_pubblicato_non_ferma_la_sequenza():
+def _lancia_estrattore(tmp_path, stagione: str):
+    """Lo script, con una cartella heXI finta al posto di quella vera.
+
+    Il test non deve dipendere da dove sta heXI su questa macchina: la prima
+    versione lo faceva, e passava qui e falliva in CI, dove `C:\dev\heXI`
+    ovviamente non esiste e lo script prendeva — giustamente — il ramo "manca
+    la cartella". Una cartella vuota creata al momento isola il caso vero: la
+    fonte c'e', il file di quella stagione no.
+    """
+    script = ROOT / "estrai_xg_concessi_hexi.py"
+    if not script.is_file():
+        pytest.skip("estrai_xg_concessi_hexi.py non presente in questa copia")
+    finta = tmp_path / "heXI"
+    (finta / "data" / "raw" / "external" / "sportmonks" / "_raw_lineups").mkdir(parents=True)
+    return subprocess.run(
+        [sys.executable, str(script)],
+        cwd=str(ROOT), capture_output=True, text=True,
+        env={**os.environ, "INDEX_SEASON": stagione,
+             "INDEX_LEGA": "ITA-Serie A", "INDEX_HEXI_DIR": str(finta)},
+    )
+
+
+def test_un_feed_non_ancora_pubblicato_non_ferma_la_sequenza(tmp_path):
     """Nessun feed per quella stagione: il passo esce bene, senza scrivere.
 
     Serve che sia cosi' perche' il passo vive dentro `pubblica.py`, che si
     ferma al primo codice di uscita diverso da zero.
+    """
+    esito = _lancia_estrattore(tmp_path, "2099-00")
+    assert esito.returncode == 0, esito.stderr[-400:]
+    assert "non ancora pubblicato" in esito.stdout
+    assert not (ROOT / "dati_esterni" / "xg_concessi_serie_a_2099-00.json").exists()
+
+
+def test_la_fonte_che_non_c_e_proprio_invece_si_fa_sentire(tmp_path):
+    """Cartella di heXI assente: quello si', e' da sistemare, e si ferma.
+
+    Le due assenze non vanno confuse. Se tacesse anche questa, una fonte
+    spostata si leggerebbe per mesi come "la stagione non e' ancora uscita".
     """
     script = ROOT / "estrai_xg_concessi_hexi.py"
     if not script.is_file():
@@ -103,9 +138,8 @@ def test_un_feed_non_ancora_pubblicato_non_ferma_la_sequenza():
     esito = subprocess.run(
         [sys.executable, str(script)],
         cwd=str(ROOT), capture_output=True, text=True,
-        env={**__import__("os").environ, "INDEX_SEASON": "2099-00",
-             "INDEX_LEGA": "ITA-Serie A"},
+        env={**os.environ, "INDEX_SEASON": "2099-00", "INDEX_LEGA": "ITA-Serie A",
+             "INDEX_HEXI_DIR": str(tmp_path / "cartella-che-non-esiste")},
     )
-    assert esito.returncode == 0, esito.stderr[-400:]
-    assert "non ancora pubblicato" in esito.stdout
-    assert not (ROOT / "dati_esterni" / "xg_concessi_serie_a_2099-00.json").exists()
+    assert esito.returncode != 0
+    assert "non e' dove dovrebbe" in esito.stderr

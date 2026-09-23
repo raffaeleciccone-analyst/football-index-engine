@@ -17,7 +17,7 @@ If you have ten minutes and want to judge the work, read these three files in th
 | File | Why |
 |---|---|
 | [`parte3_valida_tpi.py`](parte3_valida_tpi.py) | Fifteen checks on the index, including the ones it **fails**. Vintage backtests, clustered bootstrap CIs, an ablation study, a permutation placebo, and a baseline test that asks the only question that can sink a composite: *was it worth building?* |
-| [`ripara_righe_omonimi.py`](ripara_righe_omonimi.py) | A data bug, start to finish: impossible statistics → diagnosis → a repair rule that refuses to run where it cannot prove itself. The docstring tells the whole story, including the two rules I tried first and why each was wrong. Read it with its three companions — [`unisci_record_doppioni.py`](unisci_record_doppioni.py), [`importa_partite_mancanti.py`](importa_partite_mancanti.py), [`ripara_righe_orfane.py`](ripara_righe_orfane.py) — which is where it gets interesting. |
+| [`ripara_righe_omonimi.py`](ripara_righe_omonimi.py) | A data bug, start to finish: impossible statistics → diagnosis → a repair rule that refuses to run where it cannot prove itself. The docstring tells the whole story, including the two rules I tried first and why each was wrong. Read it with its companions — [`unisci_record_doppioni.py`](unisci_record_doppioni.py), [`importa_partite_mancanti.py`](importa_partite_mancanti.py), [`allinea_understat_id.py`](allinea_understat_id.py) — which is where it gets interesting. |
 | [`parte1_analisi.py`](parte1_analisi.py) | The model. Seven dimensions, z-scores computed within role, Bayesian shrinkage toward the role mean, opponent-strength adjustment. The comments say why each choice was made, and where it was wrong before. |
 
 ## What this actually does
@@ -116,17 +116,30 @@ Two reasons, and neither is modesty:
    without adding understanding.
 2. That layer is the part with ongoing value, and this license reserves commercial use.
 
-The four repair scripts *are* here, and they are the exception on purpose: they are where the
+The seven repair scripts *are* here, and they are the exception on purpose: they are where the
 reasoning lives, and none of them lets anyone rebuild the pipeline — they need a database that
 does not exist publicly. What they show is the discipline, not the plumbing. Each one refuses to
 write where it cannot prove itself, and one of them refuses because of a mistake I made in the
 other: filling both halves of a person who is still split in two would invent a double count that
 was not there before.
 
+They are also a record of one bug that took three attempts to kill. A player who changes clubs
+was becoming a second person, because the key that identified him was his name *and his team*.
+The first fix gave the ingestion his real id — and only helped the players who had stayed put,
+since a record with a null id and last year's club is reachable by neither key. The second fix
+merged the halves that had already split, and left the canonical record without the id, so the
+next transfer split it again. The third — [`allinea_understat_id.py`](allinea_understat_id.py) —
+goes looking for those records before the ingestion runs, and writes an id only where the matches
+prove whose it is. Two of the three fixes were correct and insufficient, which is the part worth
+reading.
+
 Some strings here still point at scripts from that layer: `audit/` names `set_up_tpi_pro/…`,
-and `pubblica.py` and `sentinella.py` name `parte4_aggiorna.py` — the download — as the first
-step of the run. They are not broken imports, and they have not been edited out. A pipeline whose
-first step is missing, with nothing saying so, reads as an unfinished pipeline; the same one with
+and `pubblica.py` names five steps whose files are absent — `parte4_aggiorna.py` the download,
+`anagrafica_da_hexi.py` and `estrai_xg_concessi_hexi.py` the external feeds,
+`set_up_tpi_pro/aggiorna_infortuni.py` the injuries, and `build_ai_dataset.py` the compact
+dataset the site assistant reads. They are not broken imports, and they have not been edited
+out. A pipeline whose first step is missing, with nothing saying so, reads as an unfinished
+pipeline; the same one with
 the step named and the file absent reads as what it is, a deliberate omission. The names stay,
 and this section is the explanation.
 

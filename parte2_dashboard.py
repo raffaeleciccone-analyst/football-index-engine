@@ -76,7 +76,7 @@ CSS_PATH   = _DIR / "assets" / "dashboard.css"
 # dalla dashboard non viene trovato (sta solo nel repo demo).
 # Default: cartella sorella `serie-a-index` (es. Desktop/serie-a-index
 # quando questo script vive in Desktop/serie-a-scout-index). Override con
-# l'env var SERIE_A_DEMO_DIR se il repo è altrove.
+# l'env var INDEX_DEMO_DIR se il repo è altrove.
 DEMO_DIR   = config.cartella_pubblicazione(_DIR.parent)
 
 

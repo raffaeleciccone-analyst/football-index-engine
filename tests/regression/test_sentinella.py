@@ -367,7 +367,7 @@ def test_non_si_guarda_la_stagione_che_il_sito_pubblica(monkeypatch, stato):
     """Il task pianificato gira senza variabili d'ambiente: deve decidere da se'."""
     import config
     monkeypatch.setattr(config, "SEASON_CORRENTE", "2025-26")
-    monkeypatch.setenv("SERIE_A_SEASON", "2025-26")
+    monkeypatch.setenv("INDEX_SEASON", "2025-26")
     viste = []
     monkeypatch.setattr(S, "leggi_calendario",
                         lambda lega, stagione, soglia: viste.append(stagione) or S.Calendario(errore="basta"))
@@ -482,3 +482,156 @@ def test_il_giro_lancia_pubblica_senza_toccare_git(monkeypatch, stato):
     assert visti["comando"][1:] == ["pubblica.py", "--lega", "serie-a",
                                     "--stagione", "2026-27", "--esegui"]
     assert not any("push" in x or "commit" in x for x in visti["comando"])
+
+
+# ════════════════════════════════════════════════════════════════════════════
+#  Il giro di ogni giornata, non solo quello del cambio stagione
+# ════════════════════════════════════════════════════════════════════════════
+# Lo stato si segnava per stagione: `lega|stagione|pubblicazione`. Cosi' il sito
+# si aggiornava una volta sola, al cambio d'annata, e poi restava fermo per nove
+# mesi — la giornata 4 non arrivava mai, perche' la stagione risultava gia'
+# pubblicata. Il bot continuava a girare ogni mattina annunciando una cosa che
+# non succedeva piu'. Adesso la chiave porta la giornata dentro.
+
+
+def _online(monkeypatch, ok=True, come="committato e pushato"):
+    """Prende il posto di git: registra se e come si sarebbe pubblicato."""
+    fatti = []
+
+    def finto(repo, lega, stagione, giornata):
+        fatti.append((repo, giornata))
+        return ok, come
+
+    monkeypatch.setattr(S, "manda_online", finto)
+    return fatti
+
+
+def _stato_con(stato, chiave, giornate):
+    stato.write_text(json.dumps({chiave: {"tipo": "pubblicazione",
+                                          "giornate": giornate,
+                                          "mandato": "2026-09-07T15:09:20+00:00"}}),
+                     encoding="utf-8")
+
+
+# Quattro giornate chiuse: serve a distinguere "gia' pubblicata la 3" da
+# "arrivata la 4", che con la chiave vecchia erano la stessa cosa.
+QUATTRO = [(-9, "A", "B", True), (-9, "C", "D", True),
+           (-7, "B", "C", True), (-7, "D", "A", True),
+           (-5, "A", "C", True), (-5, "B", "D", True),
+           (-3, "C", "A", True), (-3, "D", "B", True)]
+
+
+def test_una_giornata_nuova_fa_ripartire_il_giro(monkeypatch, stato):
+    """Il difetto vero: la 3 e' pubblicata, chiude la 4, e non succedeva niente.
+
+    Con la chiave per stagione bastava che esistesse
+    `ENG-Premier League|2026-27|pubblicazione` — segnata al cambio d'annata —
+    perche' ogni giornata successiva venisse saltata fino a maggio.
+    """
+    _con(monkeypatch, QUATTRO)
+    chiamate = _finto_giro(monkeypatch)
+    _online(monkeypatch)
+    _stato_con(stato, "ENG-Premier League|2026-27|pubblicazione", 3)
+
+    S.controlla("premier", "2026-27", 3, 72, manda_davvero=True, forza=False,
+                pubblica=True)
+
+    assert chiamate == [("premier", "2026-27")], (
+        "chiusa la giornata 4, il sito e' rimasto fermo alla 3")
+
+
+def test_la_stessa_giornata_non_si_ripete(monkeypatch, stato):
+    _con(monkeypatch, CHIUSA)
+    chiamate = _finto_giro(monkeypatch)
+    _online(monkeypatch)
+    _stato_con(stato, "ENG-Premier League|2026-27|pubblicazione|g3", 3)
+
+    S.controlla("premier", "2026-27", 3, 72, manda_davvero=True, forza=False,
+                pubblica=True)
+
+    assert chiamate == []
+
+
+def test_lo_stato_vecchio_vale_per_la_giornata_che_ha_dentro(monkeypatch, stato):
+    """Chi ha gia' pubblicato la 3 col formato di prima non la rifa'."""
+    _con(monkeypatch, CHIUSA)
+    chiamate = _finto_giro(monkeypatch)
+    _online(monkeypatch)
+    _stato_con(stato, "ENG-Premier League|2026-27|pubblicazione", 3)
+
+    S.controlla("premier", "2026-27", 3, 72, manda_davvero=True, forza=False,
+                pubblica=True)
+
+    assert chiamate == [], "ha ripubblicato una giornata gia' online"
+
+
+def test_un_giro_di_aggiornamento_va_online_da_solo(monkeypatch, stato):
+    """Stessa stagione, stessi file, numeri nuovi: non c'e' niente da decidere."""
+    mandati = _con(monkeypatch, CHIUSA)
+    _finto_giro(monkeypatch)
+    fatti = _online(monkeypatch)
+    _stato_con(stato, "ENG-Premier League|2026-27|pubblicazione|g2", 2)
+
+    S.controlla("premier", "2026-27", 3, 72, manda_davvero=True, forza=False,
+                pubblica=True)
+
+    assert len(fatti) == 1, "non ha pubblicato"
+    assert "online" in mandati[-1]
+
+
+def test_il_primo_giro_di_una_stagione_resta_a_mano(monkeypatch, stato):
+    """Li' il link al CSV nel README cambia, e lo cambia una persona."""
+    mandati = _con(monkeypatch, CHIUSA)
+    _finto_giro(monkeypatch)
+    fatti = _online(monkeypatch)
+
+    S.controlla("premier", "2026-27", 3, 72, manda_davvero=True, forza=False,
+                pubblica=True)
+
+    assert fatti == [], "ha pubblicato da solo il primo giro della stagione"
+    assert "git push" in mandati[-1]
+
+
+def test_se_il_push_si_ferma_lo_dice_e_non_lo_nasconde(monkeypatch, stato):
+    mandati = _con(monkeypatch, CHIUSA)
+    _finto_giro(monkeypatch)
+    _online(monkeypatch, ok=False, come="git push: rejected")
+    _stato_con(stato, "ENG-Premier League|2026-27|pubblicazione|g2", 2)
+
+    S.controlla("premier", "2026-27", 3, 72, manda_davvero=True, forza=False,
+                pubblica=True)
+
+    assert "NON pubblicata" in mandati[-1]
+    assert "rejected" in mandati[-1]
+    assert "non e' perso" in mandati[-1]
+
+
+def test_dopo_il_debutto_la_soglia_non_conta_piu(monkeypatch, stato):
+    """Con la soglia a 6, una stagione gia' pubblicata si aggiorna comunque.
+
+    La soglia risponde a "da quante giornate ha senso pubblicare un indice",
+    che e' una domanda sul debutto. Riapplicarla a ogni giro terrebbe il sito
+    fermo ai numeri vecchi per un motivo che riguardava solo la prima volta.
+    """
+    _con(monkeypatch, QUATTRO)                     # 4 giornate chiuse, soglia 6
+    chiamate = _finto_giro(monkeypatch)
+    _online(monkeypatch)
+    _stato_con(stato, "ENG-Premier League|2026-27|pubblicazione|g3", 3)
+
+    S.controlla("premier", "2026-27", 6, 72, manda_davvero=True, forza=False,
+                pubblica=True)
+
+    assert chiamate == [("premier", "2026-27")], (
+        "stagione gia' pubblicata e giornata nuova chiusa: doveva aggiornarsi")
+
+
+def test_prima_del_debutto_la_soglia_conta(monkeypatch, stato):
+    """Nessuna giornata segnata: quattro chiuse su sei richieste, si aspetta."""
+    _con(monkeypatch, QUATTRO)
+    chiamate = _finto_giro(monkeypatch)
+    _online(monkeypatch)
+
+    S.controlla("premier", "2026-27", 6, 72, manda_davvero=True, forza=False,
+                pubblica=True)
+
+    assert chiamate == [], "ha pubblicato il debutto prima della soglia"
