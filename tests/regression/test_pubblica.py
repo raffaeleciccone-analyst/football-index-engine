@@ -246,3 +246,42 @@ def test_quando_il_bot_c_e_il_messaggio_parte(monkeypatch, capsys):
     P._avvisa("pubblicata")
     assert mandati == ["pubblicata"]
     assert "avviso mandato" in capsys.readouterr().out
+
+
+def test_una_squadra_senza_nessuno_nei_primi_cento_non_e_retrocessa():
+    """Il difetto del 23/9/2026, e il motivo per cui la verifica legge l'elenco
+    intero e non 'payload.json'.
+
+    Il Cagliari aveva dieci qualificati e nessuno nei primi cento: la verifica
+    lo leggeva come uscito dal campionato e chiedeva di togliere la sua pagina,
+    che 'pagina_squadra.py' aveva gia' cancellato per la stessa ragione. Il
+    giro prima ne aveva due nei cento solo perche' due carriere spezzate
+    contavano doppio: ricucirle ha fatto sparire una squadra viva dal sito.
+    """
+    import config as _c
+    import pubblica as _P
+    from pathlib import Path as _Path
+    import json as _json, tempfile as _tf
+    marchio = _c.SITO_MARCHIO
+    with _tf.TemporaryDirectory() as d:
+        repo, uscita = _Path(d) / "repo", _Path(d) / "uscita"
+        repo.mkdir(); uscita.mkdir()
+        _pagina(repo, "index.html", marchio, "26/27")
+        (repo / "payload.json").write_text(_json.dumps({
+            "stagione": "2026-27",
+            "players": [{"id": 1, "squadra": "Arsenal"}],
+        }), encoding="utf-8")
+        (repo / "payload_lista.json").write_text(_json.dumps({
+            "stagione": "2026-27",
+            "players": [{"id": 1, "squadra": "Arsenal"}, {"id": 2, "squadra": "Cagliari"}],
+        }), encoding="utf-8")
+        for nome in ("squadra-arsenal.html", "squadra-cagliari.html", "squadra-burnley.html"):
+            _pagina(repo, nome, marchio, "26/27")
+
+        guai = _P.verifica(repo, uscita, "2026-27")
+
+    assert not any("squadra-cagliari.html" in g for g in guai), (
+        "una squadra con qualificati ma nessuno nei primi cento e' stata "
+        "scambiata per una retrocessa")
+    assert any("squadra-burnley.html" in g for g in guai), (
+        "chi e' uscito davvero deve continuare a vedersi")

@@ -55,7 +55,7 @@ import pandas as pd
 from sqlalchemy import create_engine, text
 
 import config
-from ripara_righe_omonimi import _nm
+from ripara_righe_omonimi import _nm, partite_della_lega
 from unisci_record_doppioni import chiave_nome
 
 CACHE_US = Path(os.path.expanduser("~/soccerdata")) / "data" / "Understat"
@@ -69,9 +69,18 @@ def leggi_cache() -> tuple[dict, dict, dict, dict]:
     per_nome: dict[str, set] = collections.defaultdict(set)
     id_per_nome: dict[str, set] = collections.defaultdict(set)
     rigori: dict[tuple[int, str], list] = {}
+    # Solo le partite di questa lega. I `match_*.json` stanno tutti nella stessa
+    # cartella senza niente addosso che dica da che torneo vengono: da quando la
+    # cache contiene due campionati, leggerli tutti voleva dire cercare in un
+    # database italiano delle partite inglesi, e l'elenco dei casi scartati
+    # diventava settanta righe di "non e' in calendario" in cui un caso vero non
+    # si sarebbe notato.
+    solo = partite_della_lega()
     for mf in glob.glob(str(CACHE_US / "match_*.json")):
         try:
             g = int(Path(mf).stem.split("_")[1])
+            if solo and g not in solo:
+                continue
             md = json.load(open(mf, encoding="utf-8"))
         except (OSError, ValueError, IndexError):
             continue

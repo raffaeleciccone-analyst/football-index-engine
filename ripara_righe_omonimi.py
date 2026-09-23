@@ -108,6 +108,40 @@ def _nm(s) -> str:
             .encode("ascii", "ignore").decode().lower().strip())
 
 
+def partite_della_lega() -> set[int]:
+    """Gli id delle partite che appartengono alla lega che stiamo riparando.
+
+    I `match_*.json` finiscono tutti nella stessa cartella senza niente addosso
+    che dica da quale torneo vengono: leggerli tutti significa misurare un
+    database italiano contro partite inglesi. Prima non si vedeva, perche' la
+    cache conteneva la sola stagione in corso di una lega sola; da quando ci
+    sono dentro due campionati e tre annate — riempita l'8/9/2026 per dare al
+    test di accettazione delle fusioni le partite vecchie — l'elenco dei casi
+    scartati e' diventato settanta righe di roba dell'altro campionato, in cui
+    un caso vero si perde.
+
+    L'elenco affidabile e' il file di stagione `league_<id>_season_<anno>.json`,
+    che porta dentro tutte le partite di quel torneo. Se non ce n'e' nessuno per
+    questa lega non si filtra: meglio il rumore di prima che scartare in
+    silenzio tutto quanto.
+    """
+    lega_id = getattr(config, "LEGA_ID_UNDERSTAT", None)
+    if not lega_id:
+        return set()
+    ids: set[int] = set()
+    for f in glob.glob(str(CACHE_US / ("league_%s_season_*.json" % lega_id))):
+        try:
+            d = json.load(open(f, encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        for partita in (d.get("dates") or []):
+            try:
+                ids.add(int(partita["id"]))
+            except (KeyError, TypeError, ValueError):
+                continue
+    return ids
+
+
 def carica_understat() -> tuple[dict, dict, dict]:
     """Legge la cache una volta sola.
 
@@ -115,13 +149,18 @@ def carica_understat() -> tuple[dict, dict, dict]:
     player_id distinti stanno sotto ogni nome — serve a rifiutare i nomi
     ambigui, dove il ripiego sul nome mescolerebbe due persone e ricreerebbe
     da capo il bug che stiamo riparando.
+
+    Legge solo le partite di questa lega: vedi `partite_della_lega`.
     """
     per_id: dict[int, dict[int, int]] = collections.defaultdict(dict)
     per_nome: dict[str, dict[int, int]] = collections.defaultdict(dict)
     id_per_nome: dict[str, set] = collections.defaultdict(set)
+    solo = partite_della_lega()
     for mf in glob.glob(str(CACHE_US / "match_*.json")):
         try:
             g = int(Path(mf).stem.split("_")[1])
+            if solo and g not in solo:
+                continue
             md = json.load(open(mf, encoding="utf-8"))
         except (OSError, ValueError, IndexError):
             continue

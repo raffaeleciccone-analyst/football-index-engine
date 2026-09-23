@@ -17,9 +17,17 @@ partita e se e' gia' stata giocata. Da li' escono due cose:
   turno. Serve al preavviso: sapere che domenica si chiude vale piu' di
   scoprirlo lunedi'.
 
-Due messaggi, ognuno una volta sola per stagione e per lega: il **preavviso**
-qualche giorno prima, e il **via libera** quando la giornata e' in archivio, col
-comando da lanciare dentro.
+Con `--pubblica` non si limita ad avvisare: fa il giro. E lo fa **a ogni
+giornata**, non solo al cambio di stagione — lo stato si segna per giornata, e
+finche' si segnava per stagione il sito si aggiornava una volta in agosto e poi
+restava fermo nove mesi, mentre il bot continuava ad alzarsi ogni mattina.
+
+Dalla seconda giornata in poi arriva fino in fondo: committa e pusha. Non e' una
+distrazione, e' dove passa la riga. Al primo giro di una stagione resta qualcosa
+da decidere — il link al CSV nel README, che porta l'annata nel nome — e li' si
+ferma. Dopo non cambia piu' niente a mano: sono gli stessi file con numeri
+nuovi, e fermarsi ogni settimana vorrebbe dire un sito fermo con un promemoria
+in tasca. Se la verifica finale non passa, non pubblica niente e lo scrive.
 
 Uso:
     python sentinella.py --configura          # prepara il bot, la prima volta
@@ -528,9 +536,10 @@ def pubblica_ora(alias: str, stagione: str) -> tuple[int, str, str]:
     """Lancia `pubblica.py` e torna (codice, repo del sito, ultime righe).
 
     Si ferma dove si ferma `pubblica.py`: le pagine sono scritte e verificate,
-    ma il commit e il push no. Il sito va online quando lo decidi tu — e' la
-    riga che separa "il computer mi ha risparmiato mezz'ora" da "il computer
-    ha pubblicato una cosa che nessuno ha guardato".
+    ma il commit e il push no. Chi decide se andare online e' `fai_il_giro`, in
+    base a una domanda sola: e' il primo giro di questa stagione, oppure e'
+    l'ennesima giornata? Nel primo caso resta qualcosa da fare a mano e ci si
+    ferma; nel secondo va online, ma solo perche' la verifica e' passata.
 
     Il database sta su questa macchina, quindi questo giro puo' girare solo
     qui: e' la ragione per cui la sentinella in cloud, quando la riaccenderai,
@@ -545,6 +554,61 @@ def pubblica_ora(alias: str, stagione: str) -> tuple[int, str, str]:
     repo = next((r.split(":", 1)[1].strip() for r in righe
                  if r.startswith("repo:")), str(BASE_DIR))
     return esito.returncode, repo, "\n".join(righe[-12:])
+
+
+def manda_online(repo: str, lega: str, stagione: str, giornata: int) -> tuple[bool, str]:
+    """Committa e pusha il sito. Solo per i giri di aggiornamento, non il primo.
+
+    La distinzione non e' prudenza a caso: al primo giro di una stagione il link
+    al CSV nel README cambia, perche' il nome del file porta l'annata dentro, e
+    quello lo sistema una persona. Dalla giornata dopo non cambia piu' niente a
+    mano — sono gli stessi file con numeri nuovi — e fermarsi li' ogni settimana
+    vorrebbe dire un sito fermo con un promemoria in tasca, che e' esattamente il
+    contrario di avere un bot.
+
+    Si arriva qui solo se la verifica di `pubblica.py` e' passata: se le pagine
+    non dicessero tutte la stessa stagione il giro sarebbe finito prima.
+    """
+    messaggio = (
+        "Giornata %d: dati aggiornati" % giornata
+        + "\n\nRicalcolo automatico dopo la chiusura della giornata %d di %s. "
+          "Stessi file, numeri nuovi." % (giornata, stagione.replace("-", "/")))
+    try:
+        stato = subprocess.run(["git", "status", "--porcelain"], cwd=repo,
+                               capture_output=True, text=True, errors="replace")
+        if not (stato.stdout or "").strip():
+            return True, "niente da committare: il sito era gia' aggiornato"
+        for comando in (["git", "add", "-A"],
+                        ["git", "commit", "-m", messaggio],
+                        ["git", "push", "origin", "HEAD"]):
+            esito = subprocess.run(comando, cwd=repo, capture_output=True,
+                                   text=True, errors="replace")
+            if esito.returncode != 0:
+                coda = ((esito.stdout or "") + (esito.stderr or "")).strip().splitlines()
+                return False, "%s: %s" % (" ".join(comando[:2]),
+                                          " / ".join(coda[-3:]) or "codice %d" % esito.returncode)
+        return True, "committato e pushato"
+    except OSError as e:
+        return False, str(e)
+
+
+def testo_aggiornato(lega: str, giornata: int, esito: str) -> str:
+    return (
+        "%s — giornata %d online.\n\n"
+        "Ho scaricato, ricalcolato e riscritto le pagine; la verifica e' passata "
+        "e ho pubblicato: %s.\n\n"
+        "Non c'era niente da decidere: stessa stagione, stessi file, numeri "
+        "nuovi. Il primo giro di una stagione resta l'eccezione, perche' li' il "
+        "link al CSV nel README lo cambi tu." % (lega, giornata, esito))
+
+
+def testo_push_fermo(lega: str, giornata: int, repo: str, perche: str) -> str:
+    return (
+        "%s — giornata %d ricalcolata, ma NON pubblicata.\n\n"
+        "Le pagine sono scritte e verificate: si e' fermato il push.\n\n%s\n\n"
+        "Il lavoro non e' perso, e' li' che aspetta:\n"
+        "cd %s\n"
+        "git add -A && git commit && git push" % (lega, giornata, perche, repo))
 
 
 def testo_giro_partito(lega: str, stagione: str, c: Calendario) -> str:
@@ -592,12 +656,33 @@ def fai_il_giro(alias: str, lega: str, stagione: str, c: Calendario,
     muto, la rete che cade a meta' — domani si ripete invece di restare li'
     creduto fatto.
     """
-    chiave = "%s|%s|pubblicazione" % (lega, stagione)
-    gia = _leggi_stato().get(chiave)
+    # Lo stato si segna per GIORNATA, non per stagione. Con la vecchia chiave
+    # (lega|stagione|pubblicazione) il sito si aggiornava una volta sola, al
+    # cambio d'annata, e poi restava fermo per nove mesi: la giornata 4 non
+    # arrivava mai, perche' la stagione risultava gia' pubblicata. Il bot
+    # avvisava di una cosa che non succedeva piu'.
+    chiave = "%s|%s|pubblicazione|g%d" % (lega, stagione, c.complete)
+    stato = _leggi_stato()
+    gia = stato.get(chiave)
+
+    # La chiave vecchia, senza giornata, vale per la giornata che ha dentro:
+    # chi ha gia' pubblicato la 3 con il formato di prima non deve rifarla al
+    # primo giro dopo l'aggiornamento. Senza questo, la sentinella avrebbe
+    # ricalcolato e ripubblicato una giornata gia' online, annunciandola.
+    if gia is None:
+        vecchia = stato.get("%s|%s|pubblicazione" % (lega, stagione))
+        if vecchia and (vecchia.get("giornate") or 0) >= c.complete:
+            gia = vecchia
+
     if gia and not forza:
-        print("          gia' pubblicata il %s: sto zitto."
-              % (gia.get("mandato") or "")[:10])
+        print("          giornata %d gia' pubblicata il %s: sto zitto."
+              % (c.complete, (gia.get("mandato") or "")[:10]))
         return 0
+
+    # Prima volta della stagione = nessuna giornata segnata per questa annata.
+    # E' l'unico giro che lascia qualcosa da fare a mano.
+    inizio = "%s|%s|pubblicazione" % (lega, stagione)
+    prima_volta = not any(k.startswith(inizio) for k in stato)
 
     try:
         manda(testo_giro_partito(lega, stagione, c))
@@ -610,7 +695,18 @@ def fai_il_giro(alias: str, lega: str, stagione: str, c: Calendario,
           % (alias, stagione))
     codice, repo, coda = pubblica_ora(alias, stagione)
 
-    if codice == 0:
+    if codice == 0 and not prima_volta:
+        # Giro di aggiornamento: niente da decidere, va online.
+        ok, come = manda_online(repo, lega, stagione, c.complete)
+        _segna(chiave, {"tipo": "pubblicazione", "giornate": c.complete,
+                        "online": bool(ok)})
+        if ok:
+            testo = testo_aggiornato(lega, c.complete, come)
+            print("          giornata %d online: %s" % (c.complete, come))
+        else:
+            testo = testo_push_fermo(lega, c.complete, repo, come)
+            print("          pagine pronte, push fermo: %s" % come)
+    elif codice == 0:
         _segna(chiave, {"tipo": "pubblicazione", "giornate": c.complete})
         testo = testo_giro_finito(lega, stagione, repo)
         print("          giro finito: restano il README e il commit.")
@@ -638,7 +734,15 @@ def controlla(alias: str, stagione: str | None, soglia: int, preavviso_ore: int,
         # saltato. Non si segna niente, e domani si riprova.
         return 1
 
-    if c.complete >= soglia:
+    # La soglia vale per il PRIMO giro di una stagione: quante giornate servono
+    # perche' pubblicare l'indice abbia senso. Dopo non c'entra piu' niente —
+    # una stagione gia' pubblicata si aggiorna a ogni giornata che chiude, e
+    # riapplicare la soglia vorrebbe dire tenere il sito fermo ai numeri vecchi
+    # per un motivo che riguardava solo il debutto.
+    inizio = "%s|%s|pubblicazione" % (lega, stagione)
+    gia_pubblicata = any(k.startswith(inizio) for k in _leggi_stato())
+
+    if c.complete >= soglia or gia_pubblicata:
         # Il via libera con le mani in mano, oppure il giro fatto davvero.
         if pubblica:
             if not manda_davvero:
@@ -688,8 +792,10 @@ def main() -> int:
     ap.add_argument("--tutte", action="store_true", help="tutti i campionati")
     ap.add_argument("--stagione",
                     help="es. 2026-27 (default: quella che si sta giocando ora)")
-    ap.add_argument("--giornate", type=int, default=3,
-                    help="quante giornate servono per pubblicare (default 3)")
+    ap.add_argument("--giornate", type=int, default=6,
+                    help="quante giornate servono per il PRIMO giro di una "
+                         "stagione (default 6). Dopo non conta: una stagione "
+                         "gia' pubblicata si aggiorna a ogni giornata.")
     ap.add_argument("--preavviso", type=int, default=72, metavar="ORE",
                     help="quanto prima avvisare che la giornata sta per "
                          "chiudersi (default 72; 0 = mai)")

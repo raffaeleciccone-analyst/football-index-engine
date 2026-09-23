@@ -117,6 +117,17 @@ def passi(stagione: str, lega: str = "") -> list[tuple[str, list[str] | None, st
     cambio di stagione restava indietro da solo.
     """
     elenco: list[tuple[str, list[str] | None, str]] = [
+        # Prima di parte4, perche' dopo non servirebbe: il record nuovo e' gia'
+        # nato. Un giocatore il cui record ha `understat_id` NULL non e'
+        # raggiunto da nessuna delle due chiavi dell'upsert appena cambia
+        # maglia — (nome, squadra_id) punta al club vecchio, e NULL non collide
+        # con niente — quindi l'ingestione gli crea accanto una persona nuova.
+        # E' successo a trentasette giocatori alla giornata 4, e due nomi sulla
+        # Premier e quindici sulla Serie A sono usciti due volte nell'elenco
+        # pubblicato. Il passo non inventa niente: scrive un id solo dove le
+        # partite lo dimostrano, e dove non lo dimostrano lo dice e tira via.
+        ("identita", ["allinea_understat_id.py", "--esegui"],
+         "ridai l'understat_id a chi l'ha perso, prima che un trasferimento lo sdoppi"),
         ("parte4", ["parte4_aggiorna.py"],
          "scarica e carica le partite della stagione"),
         ("game-log", ["deriva_game_log.py", "--season", stagione, "--esegui"],
@@ -264,8 +275,18 @@ def verifica(repo: Path, uscita: Path, stagione: str) -> list[str]:
     # e' della stagione che stiamo verificando.
     if squadre and dichiarata and str(dichiarata) == stagione:
         from pagina_squadra import slug
+        # L'elenco intero, non i primi cento: e' lo stesso su cui le pagine
+        # vengono scritte. Misurarle contro i primi cento vorrebbe dire
+        # chiamare "non piu' nel campionato" una squadra che semplicemente non
+        # ha nessuno la' dentro — al Cagliari e' successo il 23/9/2026, con
+        # dieci qualificati e zero nei cento.
+        lista = repo / "payload_lista.json"
+        fonte = lista if lista.is_file() else payload
         try:
-            giocatori = json.loads(payload.read_text(encoding="utf-8")).get("players") or []
+            letto = json.loads(fonte.read_text(encoding="utf-8"))
+            giocatori = letto.get("players") or []
+            if str(letto.get("stagione")) != stagione:
+                giocatori = json.loads(payload.read_text(encoding="utf-8")).get("players") or []
         except (OSError, ValueError):
             giocatori = []
         attese = {"squadra-%s.html" % slug(g["squadra"]) for g in giocatori if g.get("squadra")}

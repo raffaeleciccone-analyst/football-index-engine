@@ -25,3 +25,20 @@ repos:
       - id: detect-private-key
       - id: end-of-file-fixer
       - id: trailing-whitespace
+  # I nomi che non esistono. L'8/9/2026 il giro della Serie A si e' fermato su
+  # `NameError: name 'cfg' is not defined`: una riga aggiunta in main() la sera
+  # prima, con la config chiamata col nome sbagliato. I 292 test erano verdi —
+  # provano la funzione, che sta a parte, non la riga che la chiama — e il
+  # difetto e' uscito solo quando la sentinella ha eseguito quel ramo, in
+  # automatico, alle nove del mattino.
+  #
+  # Selezione stretta di proposito: solo cio' che al momento giusto solleva
+  # un'eccezione. Il resto di `F` sono import inutilizzati e f-string senza
+  # segnaposto, 130 in tutto: veri, ma non fermano un giro, e un controllo che
+  # segnala sempre qualcosa e' un controllo che si impara a ignorare.
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.22
+    hooks:
+      - id: ruff
+        name: nomi non definiti, doppie definizioni, errori di sintassi
+        args: [--select, "E9,F821,F811", --no-cache]

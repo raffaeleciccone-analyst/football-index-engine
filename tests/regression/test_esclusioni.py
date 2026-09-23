@@ -18,6 +18,17 @@ piu' giu'. Un interruttore di spegnimento travestito da ruolo, con tre difetti:
 
 Adesso l'esclusione ha un elenco suo, il motivo e' obbligatorio, e un nome che
 non trova nessuno viene detto.
+
+**Cosa questi test NON coprono, e chi lo copre.** Provano `applica_esclusioni`,
+non la riga di `main()` che la chiama. L'8/9/2026 quella riga passava `cfg` —
+che dentro `main()` non esiste, li' la config si chiama `CFG` — e il giro della
+Serie A si e' fermato su un `NameError` alle nove del mattino, in automatico,
+con questi sei test verdi. Arrivarci da un test vorrebbe dire un `main()` con un
+database dietro; scriverne uno che legge la chiamata con l'AST e' stato provato
+ed e' risultato inutile, perche' passava anche col difetto rimesso. La rete e'
+il gancio `ruff` (`E9,F821,F811`) in `.pre-commit-config.yaml`, che quel nome lo
+prende in un secondo: un linter fa meglio di un test scritto a mano il lavoro di
+un linter.
 """
 import sys
 from pathlib import Path
@@ -79,3 +90,42 @@ def test_por_non_e_piu_un_interruttore():
     forzati_por = {n for n, r in CFG.ruolo_override.items() if r == "POR"}
     assert not (forzati_por & spenti_a_mano)
     assert CFG.escludi == {}
+
+
+# ── Chi un ruolo non ce l'ha ────────────────────────────────────────────────
+# Diverso da un'esclusione: nessuno ha deciso niente, manca il dato. Il TPI e'
+# standardizzato dentro il ruolo, quindi senza ruolo la riga esce vuota — e in
+# un CSV che si presenta come "ogni giocatore qualificato" una riga vuota dice
+# che e' qualificato e non dice niente di lui.
+
+from parte1_analisi import scarta_senza_ruolo  # noqa: E402
+
+
+def _con_un_senza_ruolo(valore):
+    df_pa = pd.DataFrame({"giocatore_id": [1, 2],
+                          "giocatore": ["Con Ruolo", "Senza Ruolo"],
+                          "ruolo": ["DIF", valore]})
+    df_gp = pd.DataFrame({"giocatore_id": pd.array([1, 2], dtype="Int64"),
+                          "minuti": [90, 65]})
+    return df_pa, df_gp
+
+
+@pytest.mark.parametrize("valore", ["", "  ", None, "nan", "None"])
+def test_un_ruolo_vuoto_in_ogni_forma_esce(valore):
+    """Il campo arriva dal database e da pandas: vuoto ha cinque facce."""
+    df_pa, df_gp = scarta_senza_ruolo(*_con_un_senza_ruolo(valore))
+    assert list(df_pa["giocatore"]) == ["Con Ruolo"]
+    assert set(df_gp["giocatore_id"]) == {1}
+
+
+def test_chi_il_ruolo_ce_l_ha_resta():
+    df_pa, df_gp = scarta_senza_ruolo(*_con_un_senza_ruolo("ATT"))
+    assert len(df_pa) == 2 and len(df_gp) == 2
+
+
+def test_l_esclusione_si_dice(caplog):
+    """Non li ha esclusi un criterio: mancava il dato, e il numero va detto."""
+    with caplog.at_level("WARNING"):
+        scarta_senza_ruolo(*_con_un_senza_ruolo(""))
+    assert "senza ruolo" in caplog.text
+    assert "Senza Ruolo" in caplog.text
