@@ -319,6 +319,18 @@ L'attivita' pianificata lancia `sentinella.py --tutte --giornate 6 --pubblica`.
   chiede a `config`, perche' la stessa costante in due punti e' due valori che
   possono divergere.
 
-* Il **DEFAULT `'2025-26'`** della colonna `season` e' ancora nel DDL dei due
-  database. La verifica a valle dell'ingestione lo copre; toglierlo tocca
-  `set_up_tpi_pro/aggiorna.py`, che e' un flusso a parte.
+* **Il DEFAULT `'2025-26'` della colonna `season`: tolto il 23/9/2026**
+  (`sql/migrations/2026-09-23_season_senza_default.sql`, eseguita su tutti e
+  due i database). Stava ancora su `calendario`, `giocatore_partita` e
+  `t_squadra_game_log` — su `squadra_calendario` era gia' sparito il 27 agosto,
+  dopo che tutte e 1520 le righe si erano ritrovate a '2025-26'.
+
+  Chi ci cascava ancora era `set_up_tpi_pro/aggiorna.py`, la vecchia variante
+  dell'ingestione che si lancia a mano: ometteva `season` su due tabelle.
+  Finche' l'annata in corso era la 2025-26 scriveva l'anno giusto per caso;
+  dalla 2026-27 avrebbe etichettato ogni riga con l'anno prima, in silenzio.
+  Ora la scrive da `config.SEASON_CORRENTE`.
+
+  Le colonne restano NOT NULL, quindi una INSERT smemorata adesso si ferma
+  invece di inventarsi l'annata — e `tests/regression/test_stagione_nelle_insert.py`
+  se ne accorge prima, leggendo le INSERT una per una.
