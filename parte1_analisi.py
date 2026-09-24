@@ -2203,6 +2203,30 @@ def compute_physical_reliability(
     )
 
 
+def data_riferimento_eta(df_gp: pd.DataFrame):
+    """Il giorno a cui si misura l'eta': l'ultima partita dei dati misurati.
+
+    Era `date.today()`, e per la stagione in corso non fa differenza. Per una
+    stagione chiusa si': rigenerare l'archivio 2025-26 il 24/9/2026 invece del
+    23/9 spostava l'eta' di un quarto dei giocatori, e rifarlo fra un anno li
+    avrebbe resi tutti di un anno piu' vecchi di quanto erano in quella
+    stagione — e l'eta' non e' un'etichetta, entra in `eta_index` e da li' nel
+    TPI esteso. Lo stesso per i vintage del backtest: alla giornata 12 un
+    giocatore aveva l'eta' della giornata 12.
+
+    L'ultima partita e' un fatto dei dati, quindi la stessa stagione da' la
+    stessa eta' in qualunque giorno la si rigeneri. Senza date si torna a oggi,
+    che e' quello che succedeva prima.
+    """
+    import datetime
+
+    if "data" in df_gp.columns:
+        ultima = pd.to_datetime(df_gp["data"], errors="coerce").max()
+        if pd.notna(ultima):
+            return ultima.date()
+    return datetime.date.today()
+
+
 def load_age_physical_data(engine, df_pa: pd.DataFrame, df_gp: pd.DataFrame, cfg: Config,
                            season: str | None = None) -> pd.DataFrame:
     """
@@ -2218,7 +2242,8 @@ def load_age_physical_data(engine, df_pa: pd.DataFrame, df_gp: pd.DataFrame, cfg
     import datetime
 
     rows: list[dict] = []
-    oggi = datetime.date.today()
+    # Non "oggi": il giorno dell'ultima partita misurata (vedi la funzione).
+    oggi = data_riferimento_eta(df_gp)
 
     # ── Carica date di nascita ────────────────────────────────
     try:
