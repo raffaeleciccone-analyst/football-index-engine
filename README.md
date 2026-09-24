@@ -133,6 +133,13 @@ goes looking for those records before the ingestion runs, and writes an id only 
 prove whose it is. Two of the three fixes were correct and insufficient, which is the part worth
 reading.
 
+After a bug that survived two correct fixes, the last word belongs to a check, not a fix:
+[`controlla_anagrafica.py`](controlla_anagrafica.py) writes nothing, runs after an ingestion, and
+asks in a few seconds whether any of those shapes has come back — split careers, the same match
+on two records, empty shells, missing ids. It measures by the id rather than by the scraper's
+cache, because the cache thins out on its own, and a check that cannot run when it is needed
+checks nothing.
+
 Some strings here still point at scripts from that layer: `audit/` names `set_up_tpi_pro/…`,
 and `pubblica.py` names five steps whose files are absent — `parte4_aggiorna.py` the download,
 `anagrafica_da_hexi.py` and `estrai_xg_concessi_hexi.py` the external feeds,
