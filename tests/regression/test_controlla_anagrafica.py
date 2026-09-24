@@ -24,7 +24,11 @@ def anagrafica(*righe):
 
 
 def partite(*righe):
-    return pd.DataFrame(righe, columns=["gid", "cid", "season", "minuti"])
+    """(gid, cid, season, minuti); gli altri campi misurati a zero, oppure
+    (gid, cid, season, minuti, xg) quando serve che due righe differiscano."""
+    piene = [(*r[:4], 0, 0, 1, r[4] if len(r) > 4 else 0.0, 0.0, 0.0, 0.0) for r in righe]
+    return pd.DataFrame(piene, columns=["gid", "cid", "season", "minuti", "goal", "assist",
+                                        "tiri", "xg", "xa", "xg_chain", "xg_buildup"])
 
 
 def test_anagrafica_sana_e_pulita():
@@ -97,3 +101,16 @@ def test_id_mancante_conta_solo_nella_stagione_in_corso():
     esito = controlla(ana, rig, STAGIONE)
     assert len(esito.id_mancanti) == 1
     assert "Chavarria" in esito.id_mancanti[0]
+
+
+def test_copia_con_un_nome_diverso_si_vede():
+    # Il caso del 24/9, che i quattro controlli per nome non vedevano.
+    ana = anagrafica((3, "Pervis Estupiñán", None, "AC Milan"),
+                     (4, "Estupiñán", 5136, "AC Milan"))
+    rig = partite(*[(3, c, "2025-26", 90, 0.1 * c) for c in (1, 2, 3)],
+                  *[(4, c, "2025-26", 90, 0.1 * c) for c in (1, 2, 3)],
+                  (4, 9, STAGIONE, 90))
+    esito = controlla(ana, rig, STAGIONE)
+    assert len(esito.copie) == 1
+    assert "id3" in esito.copie[0].split(":")[0]
+    assert not esito.pulito

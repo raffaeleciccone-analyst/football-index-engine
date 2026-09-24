@@ -47,17 +47,81 @@ def test_nessun_id_di_record_nel_codice():
             "%s sembra l'id di un record scritto a mano" % numero)
 
 
-def test_la_copia_si_riconosce_su_tutta_la_riga_non_solo_sui_minuti():
-    """Due riserve entrate allo stesso minuto avrebbero minuti uguali senza
-    essere la stessa persona: da sole non provano niente."""
-    for campo in ("minuti", "goal", "assist", "tiri"):
-        assert "p2.%s = p1.%s" % (campo, campo) in SORGENTE, (
-            "il confronto non guarda %s: e' troppo debole per cancellare" % campo)
+# Da qui i test provano il comportamento su righe costruite, non il sorgente.
+# Le due prove che c'erano prima cercavano stringhe SQL nel file: sono passate
+# per tutto settembre mentre Estupinan restava pubblicato due volte.
+
+import pandas as pd                                        # noqa: E402
+
+from ripara_anagrafica_duplicati import copie_complete     # noqa: E402
+
+CAMPI = ["gid", "cid", "minuti", "goal", "assist", "tiri", "xg", "xa",
+         "xg_chain", "xg_buildup"]
 
 
-def test_si_cancella_solo_chi_e_copia_al_cento_per_cento():
-    """Se anche una sola riga e' sua e di nessun altro, non e' una copia."""
-    assert "righe_copia = righe_totali" in SORGENTE
+def _righe(*r):
+    return pd.DataFrame(r, columns=CAMPI)
+
+
+def _partita(gid, cid, minuti=90, goal=0, xg=0.0):
+    return (gid, cid, minuti, goal, 0, 1, xg, 0.0, xg, 0.0)
+
+
+def test_copia_con_un_nome_diverso_si_trova():
+    """Il caso del 24/9: "Pervis Estupiñán" dall'anagrafica, "Estupiñán" da
+    Understat. Il record vecchio e' la copia; il nuovo ha anche la 2026-27."""
+    stagione = [_partita(1, c, xg=0.1 * c) for c in (1, 2, 3, 4)]
+    nuovo = [_partita(2, c, xg=0.1 * c) for c in (1, 2, 3, 4)] + [_partita(2, 9)]
+    esito = copie_complete(_righe(*stagione, *nuovo),
+                           {1: "Pervis Estupiñán", 2: "Estupiñán"})
+    assert list(esito.copia) == [1]
+    assert list(esito.resta) == [2], "resta chi ha piu' righe, non l'id piu' basso"
+
+
+def test_copia_a_vicenda_resta_il_piu_antico():
+    """Thorsby, 8/9: tredici righe su tredici da tutte e due le parti."""
+    a = [_partita(5, c, xg=0.2) for c in (1, 2, 3)]
+    b = [_partita(7, c, xg=0.2) for c in (1, 2, 3)]
+    esito = copie_complete(_righe(*a, *b), {5: "Morten Thorsby", 7: "Morten Thorsby"})
+    assert list(zip(esito.copia, esito.resta)) == [(7, 5)]
+
+
+def test_compagni_di_squadra_con_righe_uguali_non_sono_copie():
+    """Portiere e difensore a 90' senza un tiro: righe identiche, due persone.
+    Sui database veri sono migliaia di coppie."""
+    portiere = [_partita(1, c) for c in (1, 2, 3)]
+    difensore = [_partita(2, c) for c in (1, 2, 3)] + [_partita(2, 4, goal=1)]
+    esito = copie_complete(_righe(*portiere, *difensore),
+                           {1: "Jordan Pickford", 2: "James Tarkowski"})
+    assert esito.empty
+
+
+def test_righe_uguali_a_compagni_diversi_non_sono_una_copia():
+    """Tre righe uguali a tre record diversi non sono la copia di nessuno."""
+    a = [_partita(1, c) for c in (1, 2, 3)]
+    altri = [_partita(10 + c, c) for c in (1, 2, 3)]
+    nomi = {1: "Danilo", 11: "Danilo", 12: "Danilo", 13: "Danilo"}
+    assert copie_complete(_righe(*a, *altri), nomi).empty
+
+
+def test_una_riga_sua_basta_a_non_essere_una_copia():
+    a = [_partita(1, c, xg=0.3) for c in (1, 2, 3)] + [_partita(1, 4, goal=1)]
+    b = [_partita(2, c, xg=0.3) for c in (1, 2, 3)]
+    esito = copie_complete(_righe(*a, *b), {1: "Morten Thorsby", 2: "Morten Thorsby"})
+    assert list(esito.copia) == [2], "b e' copia di a, a non e' copia di b"
+
+
+def test_una_differenza_negli_xg_basta_a_non_essere_copia():
+    """Minuti, gol e tiri uguali non bastano: prima si guardavano solo quelli."""
+    a = [_partita(1, c, xg=0.3) for c in (1, 2, 3)]
+    b = [_partita(2, c, xg=0.3) for c in (1, 2)] + [_partita(2, 3, xg=0.5)]
+    assert copie_complete(_righe(*a, *b), {1: "Leo Ostigard", 2: "Leo Ostigard"}).empty
+
+
+def test_sotto_tre_partite_giocate_non_si_decide():
+    a = [_partita(1, c) for c in (1, 2)]
+    b = [_partita(2, c) for c in (1, 2, 3)]
+    assert copie_complete(_righe(*a, *b), {1: "Estupiñán", 2: "Estupiñán"}).empty
 
 
 def test_di_default_non_scrive():

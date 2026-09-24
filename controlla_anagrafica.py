@@ -22,8 +22,8 @@ sono due persone, quindi due omonimi con l'id sono omonimi veri, e il sospetto
 cade solo dove l'id manca. E' lo stesso buco da cui passano i trasferimenti
 (NULL non collide con niente), quindi e' proprio li' che si guarda.
 
-I QUATTRO CONTROLLI
--------------------
+I CINQUE CONTROLLI
+-----------------
   1. carriere spezzate — due o piu' record con lo stesso nome e con partite,
      almeno uno senza `understat_id`;
   2. righe doppie — la stessa partita giocata da due record con lo stesso nome:
@@ -32,7 +32,13 @@ I QUATTRO CONTROLLI
   3. gusci — un record senza nessuna partita accanto a un omonimo che ne ha:
      e' la forma che l'8/9 ha fermato `parte4`;
   4. id mancanti — record con partite nella stagione in corso e
-     `understat_id` NULL: al prossimo trasferimento si spezzano.
+     `understat_id` NULL: al prossimo trasferimento si spezzano;
+  5. copie — un record le cui righe sono TUTTE uguali a quelle di un altro,
+     anche con un nome diverso. I primi quattro raggruppano per nome, e il
+     24/9 e' uscito il caso che il nome non vede: "Pervis Estupiñán"
+     dall'anagrafica e "Estupiñán" da Understat, stesse 19 partite, pubblicato
+     due volte nella 2025-26. La regola e' quella di
+     `ripara_anagrafica_duplicati.py`, che e' anche la cura.
 
 Gli omonimi veri (tutti con l'id, tutti diversi) si contano ma non sono un
 difetto.
@@ -56,6 +62,7 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.engine import make_url
 
 import config
+from ripara_anagrafica_duplicati import CAMPI, copie_complete
 from unisci_record_doppioni import chiave_nome
 
 LEGHE = {"premier": "ENG-Premier League", "serie-a": "ITA-Serie A"}
@@ -67,11 +74,13 @@ class Esito:
     righe_doppie: list[str] = field(default_factory=list)
     gusci: list[str] = field(default_factory=list)
     id_mancanti: list[str] = field(default_factory=list)
+    copie: list[str] = field(default_factory=list)
     omonimi_veri: int = 0
 
     @property
     def pulito(self) -> bool:
-        return not (self.spezzate or self.righe_doppie or self.gusci or self.id_mancanti)
+        return not (self.spezzate or self.righe_doppie or self.gusci or self.id_mancanti
+                    or self.copie)
 
 
 def _senza_id(v) -> bool:
@@ -82,7 +91,7 @@ def controlla(ana: pd.DataFrame, righe: pd.DataFrame, stagione: str) -> Esito:
     """I quattro controlli, sui dati gia' letti.
 
     `ana`:   id, n (nome), understat_id, squadra
-    `righe`: gid, cid, season, minuti — una riga per giocatore e partita
+    `righe`: gid, cid, season e i CAMPI misurati — una riga per giocatore e partita
     """
     esito = Esito()
     ana = ana.assign(chiave=ana.n.map(chiave_nome))
@@ -120,6 +129,11 @@ def controlla(ana: pd.DataFrame, righe: pd.DataFrame, stagione: str) -> Esito:
     for gid in sorted(in_corso):
         if _senza_id(idx.loc[gid].understat_id):
             esito.id_mancanti.append(f"{idx.loc[gid].n}: {chi(gid)}")
+
+    copie = copie_complete(righe, dict(zip(ana.id.astype(int), ana.n)))
+    for r in copie.itertuples(index=False):
+        esito.copie.append(f"{idx.loc[r.copia].n} {chi(int(r.copia))}: {r.righe_copia} righe "
+                           f"tutte uguali a {idx.loc[r.resta].n} {chi(int(r.resta))}")
     return esito
 
 
@@ -131,8 +145,8 @@ def leggi(database: str) -> tuple[pd.DataFrame, pd.DataFrame]:
             "SELECT g.id, TRIM(CONCAT_WS(' ', g.nome, g.cognome)) n, g.understat_id, "
             "sq.nome squadra FROM giocatori g LEFT JOIN squadre sq ON sq.id = g.squadra_id"), cx)
         righe = pd.read_sql(text(
-            "SELECT giocatore_id gid, calendario_id cid, season, minuti "
-            "FROM giocatore_partita"), cx)
+            "SELECT giocatore_id gid, calendario_id cid, season, " + ", ".join(CAMPI)
+            + " FROM giocatore_partita"), cx)
     eng.dispose()
     return ana, righe
 
@@ -142,7 +156,8 @@ def stampa(nome: str, database: str, esito: Esito, stagione: str) -> None:
     for titolo, voci in (("carriere spezzate", esito.spezzate),
                          ("righe doppie", esito.righe_doppie),
                          ("gusci", esito.gusci),
-                         ("id mancanti nella stagione in corso", esito.id_mancanti)):
+                         ("id mancanti nella stagione in corso", esito.id_mancanti),
+                         ("copie (anche con un nome diverso)", esito.copie)):
         print(f"  {titolo:38}: {len(voci)}")
         for v in voci[:15]:
             print(f"      {v}")

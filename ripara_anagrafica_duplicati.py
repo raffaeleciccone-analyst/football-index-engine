@@ -31,6 +31,29 @@ elenco di nomi scritto a mano invecchia: a settembre i duplicati erano altri due
 e nessuno lo sapeva. Adesso li trova dai dati, quindi vale anche per quelli
 della prossima stagione, che oggi non esistono ancora.
 
+IL NOME NON E' LA PROVA (24/09/2026)
+------------------------------------
+Passando dall'elenco ai dati, la ricerca aveva tenuto una condizione di
+comodo: i due record dovevano avere lo stesso `nome`. Estupinan e' rimasto
+fuori proprio per quella — "Pervis Estupiñán" dall'anagrafica heXI, e
+"Estupiñán" e basta da Understat, che per lui usa un nome solo — e la
+classifica 2025-26 della Serie A lo pubblicava due volte, con gli stessi numeri.
+Nell'anagrafica ci sono quasi quattrocento record con nome o cognome vuoto.
+
+E non era il solo filtro a lasciarlo fuori: il record che resta era sempre
+quello con l'id piu' basso. Qui la copia era il record VECCHIO, e quello
+nuovo aveva in piu' le partite della 2026-27: tenere il vecchio avrebbe
+cancellato la stagione in corso.
+
+Ora la prova sono le righe, coppia per coppia: TUTTE le righe della copia
+identiche a quelle di UN SOLO altro record, su tutti i campi misurati (xg e
+xa compresi, non piu' solo minuti/gol/assist/tiri), con almeno tre partite
+giocate. Il nome resta solo come conferma debole: basta una parola in comune.
+Tolto il nome, le righe identiche fra compagni di squadra sono migliaia —
+portiere e difensore a 90' senza un tiro — ma nessuna coppia le ha TUTTE:
+misurato su entrambi i database, la sola era Estupinan, 19 su 19; la seconda
+11 su 75. Resta il record con piu' righe; a pari righe, il piu' antico.
+
 USO
 ---
     python ripara_anagrafica_duplicati.py            # mostra e basta
@@ -56,28 +79,76 @@ BACKUP = Path(r"C:\dev") / ("_backup_anagrafica_" + datetime.now().strftime("%Y%
 # Una riga e' "la stessa" se coincide su tutto cio' che descrive la prestazione.
 # Solo i minuti non basterebbero: due riserve entrate allo stesso minuto nella
 # stessa partita avrebbero minuti uguali senza essere la stessa persona.
-STESSA_RIGA = """p2.calendario_id = p1.calendario_id
-              AND p2.minuti = p1.minuti AND p2.goal = p1.goal
-              AND p2.assist = p1.assist AND p2.tiri = p1.tiri"""
+CAMPI = ("minuti", "goal", "assist", "tiri", "xg", "xa", "xg_chain", "xg_buildup")
+
+# Sotto questa soglia "tutte le righe uguali" non prova niente: una riserva
+# con due spezzoni da zero tiri e' identica a mezza panchina.
+MIN_GIOCATE = 3
+
+
+def _firma(r) -> tuple:
+    """La riga ridotta a cio' che si confronta. I float si arrotondano: arrivano
+    da colonne FLOAT, e due letture dello stesso valore possono differire
+    all'ultima cifra senza che sia una differenza."""
+    fuori = [int(r.cid)]
+    for campo in CAMPI:
+        v = getattr(r, campo)
+        if v is None or pd.isna(v):
+            fuori.append(None)
+        elif isinstance(v, float):
+            fuori.append(round(v, 4))
+        else:
+            fuori.append(v)
+    return tuple(fuori)
+
+
+def copie_complete(righe: pd.DataFrame, nomi: dict[int, str]) -> pd.DataFrame:
+    """I record le cui righe sono TUTTE uguali a quelle di un solo altro record.
+
+    `righe`: gid, cid e i CAMPI, una riga per giocatore e partita (anche quelle
+    da zero minuti: una riga che solo la copia ha la rende non-copia).
+    `nomi`:  id -> nome completo.
+    """
+    from unisci_record_doppioni import chiave_nome
+
+    firme: dict[int, set] = {}
+    giocate: dict[int, int] = {}
+    chi_ha: dict[tuple, set] = {}
+    for r in righe.itertuples(index=False):
+        gid, f = int(r.gid), _firma(r)
+        firme.setdefault(gid, set()).add(f)
+        chi_ha.setdefault(f, set()).add(gid)
+        if r.minuti and r.minuti > 0:
+            giocate[gid] = giocate.get(gid, 0) + 1
+
+    parole = {gid: set(chiave_nome(n).split()) for gid, n in nomi.items()}
+    uscita = []
+    for a, fa in firme.items():
+        if giocate.get(a, 0) < MIN_GIOCATE:
+            continue
+        # Chi ha TUTTE le righe di `a`: l'intersezione, non l'unione — tre
+        # righe uguali a tre compagni diversi non sono una copia di nessuno.
+        candidati = set.intersection(*(chi_ha[f] for f in fa)) - {a}
+        for b in sorted(candidati):
+            if not (parole.get(a, set()) & parole.get(b, set())):
+                continue
+            # Resta chi ha piu' righe; a pari righe (copia a vicenda) il piu'
+            # antico. L'id da solo non decide: il vecchio puo' essere la copia.
+            if len(firme[b]) == len(fa) and a < b:
+                continue
+            uscita.append((a, b, nomi.get(a, "?"), len(fa), len(fa)))
+            break
+    return pd.DataFrame(uscita, columns=["copia", "resta", "nome",
+                                         "righe_copia", "righe_totali"])
 
 
 def trova_copie(eng) -> pd.DataFrame:
-    """I record le cui righe sono TUTTE copie di quelle di un altro omonimo."""
-    return pd.read_sql(f"""
-        SELECT  p1.giocatore_id                AS copia,
-                MIN(p2.giocatore_id)           AS resta,
-                g1.nome                        AS nome,
-                COUNT(DISTINCT p1.id)          AS righe_copia,
-                (SELECT COUNT(*) FROM giocatore_partita x
-                  WHERE x.giocatore_id = p1.giocatore_id) AS righe_totali
-        FROM        giocatore_partita p1
-        JOIN        giocatore_partita p2 ON {STESSA_RIGA}
-                                        AND p2.giocatore_id <> p1.giocatore_id
-        JOIN        giocatori g1 ON g1.id = p1.giocatore_id
-        JOIN        giocatori g2 ON g2.id = p2.giocatore_id AND g2.nome = g1.nome
-        GROUP BY    p1.giocatore_id, g1.nome
-        HAVING      righe_copia = righe_totali
-    """, eng)
+    righe = pd.read_sql(
+        "SELECT giocatore_id gid, calendario_id cid, " + ", ".join(CAMPI)
+        + " FROM giocatore_partita", eng)
+    ana = pd.read_sql(
+        "SELECT id, TRIM(CONCAT_WS(' ', nome, cognome)) n FROM giocatori", eng)
+    return copie_complete(righe, dict(zip(ana.id.astype(int), ana.n)))
 
 
 def main() -> None:
@@ -87,15 +158,6 @@ def main() -> None:
 
     if copie.empty:
         print("Nessun record duplicato: ogni riga partita appartiene a uno solo.")
-        return
-
-    # Chi ha piu' righe non e' una copia di chi ne ha meno: si tiene il record
-    # piu' completo. Se due si dichiarassero copia a vicenda (righe identiche in
-    # numero uguale) resterebbe quello con l'id piu' basso, cioe' il piu' antico.
-    copie = copie[copie.copia > copie.resta]
-    if copie.empty:
-        print("Trovate sovrapposizioni, ma nessuna e' una copia completa: "
-              "non si cancella niente.")
         return
 
     print("Record che sono copie complete di un altro:\n")
