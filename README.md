@@ -20,6 +20,10 @@ If you have ten minutes and want to judge the work, read these three files in th
 | [`ripara_righe_omonimi.py`](ripara_righe_omonimi.py) | A data bug, start to finish: impossible statistics → diagnosis → a repair rule that refuses to run where it cannot prove itself. The docstring tells the whole story, including the two rules I tried first and why each was wrong. Read it with its companions — [`unisci_record_doppioni.py`](unisci_record_doppioni.py), [`importa_partite_mancanti.py`](importa_partite_mancanti.py), [`allinea_understat_id.py`](allinea_understat_id.py) — which is where it gets interesting. |
 | [`parte1_analisi.py`](parte1_analisi.py) | The model. Seven dimensions, z-scores computed within role, Bayesian shrinkage toward the role mean, opponent-strength adjustment. The comments say why each choice was made, and where it was wrong before. |
 
+## What I decided
+
+The idea is mine, where playing football meets match analysis: an index that tells who is improving. Publishing all fifteen checks, including the ones the index fails, was my call. I found the duplicates and the orphan rows by exploring the dataset and the results. The code was written by AI: I steered it and checked the results.
+
 ## What this actually does
 
 ```
